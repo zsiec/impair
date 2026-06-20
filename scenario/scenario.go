@@ -96,9 +96,29 @@ type DropListParams struct {
 
 const msToNs = 1_000_000
 
-// Build constructs the Engine for s. It returns an error if a stage is empty,
-// over-specified, or carries an unknown distribution.
+// Build constructs the Engine for s (substreams keyed "<kind>/<dir>/<index>").
+// It returns an error if a stage is empty, over-specified, or carries an unknown
+// distribution. The single-link keying is load-bearing: committed goldens pin it.
 func Build(s Scenario) (*engine.Engine, error) {
+	return build(s, "")
+}
+
+// BuildLink constructs the Engine for ONE bonded link of s, giving that link its
+// own independent rng substreams by prefixing every cell key with "L<link>/".
+// Two links built from the SAME scenario therefore draw INDEPENDENT loss/GE/
+// delay/reorder sequences — the SMPTE 2022-7 premise that redundant paths must
+// fail independently for bonding to mask a single-link burst. Because rng.Sub is
+// additive, link L's draws are a pure function of (seed, L), identical on any
+// machine. link must be >= 0; BuildLink(s, 0) differs from Build(s) by design
+// (the prefix), so a bonded run is its own family, never aliased to single-link.
+func BuildLink(s Scenario, link int) (*engine.Engine, error) {
+	if link < 0 {
+		return nil, fmt.Errorf("scenario %q: negative link index %d", s.Name, link)
+	}
+	return build(s, fmt.Sprintf("L%d/", link))
+}
+
+func build(s Scenario, keyPrefix string) (*engine.Engine, error) {
 	root := rng.NewRoot(s.Seed)
 	c2sStages, s2cStages := s.C2S, s.S2C
 	if len(s.Pipeline) > 0 {
@@ -107,21 +127,21 @@ func Build(s Scenario) (*engine.Engine, error) {
 		}
 		c2sStages, s2cStages = s.Pipeline, s.Pipeline
 	}
-	c2s, err := buildPipeline(root, "c2s", c2sStages)
+	c2s, err := buildPipeline(root, keyPrefix, "c2s", c2sStages)
 	if err != nil {
 		return nil, fmt.Errorf("c2s: %w", err)
 	}
-	s2c, err := buildPipeline(root, "s2c", s2cStages)
+	s2c, err := buildPipeline(root, keyPrefix, "s2c", s2cStages)
 	if err != nil {
 		return nil, fmt.Errorf("s2c: %w", err)
 	}
 	return engine.New(c2s, s2c), nil
 }
 
-func buildPipeline(root *rng.Root, dir string, stages []Stage) ([]engine.Cell, error) {
+func buildPipeline(root *rng.Root, keyPrefix, dir string, stages []Stage) ([]engine.Cell, error) {
 	cells := make([]engine.Cell, 0, len(stages))
 	for i, st := range stages {
-		c, err := buildCell(root, dir, i, st)
+		c, err := buildCell(root, keyPrefix, dir, i, st)
 		if err != nil {
 			return nil, fmt.Errorf("stage %d: %w", i, err)
 		}
@@ -130,9 +150,9 @@ func buildPipeline(root *rng.Root, dir string, stages []Stage) ([]engine.Cell, e
 	return cells, nil
 }
 
-func buildCell(root *rng.Root, dir string, idx int, st Stage) (engine.Cell, error) {
+func buildCell(root *rng.Root, keyPrefix, dir string, idx int, st Stage) (engine.Cell, error) {
 	sub := func(kind string) *rng.Source {
-		return root.Sub(fmt.Sprintf("%s/%s/%d", kind, dir, idx))
+		return root.Sub(fmt.Sprintf("%s%s/%s/%d", keyPrefix, kind, dir, idx))
 	}
 	set := 0
 	var cell engine.Cell
