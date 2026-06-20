@@ -15,6 +15,11 @@ type DashboardSection struct {
 	Tier   string        `json:"tier"`  // e.g. "Tier-1 bit-deterministic" / "Tier-2 distribution-reproducible"
 	Blurb  string        `json:"blurb"` // one-line description of what the section certifies
 	Matrix result.Matrix `json:"matrix"`
+	// Frames is an optional per-cell "what survived" filmstrip sidecar for
+	// glass-to-glass sections (lib -> scenario -> {thumbs, deliveredPct, audioPct,
+	// keyframes, ...}). Passed through verbatim into the data island and rendered
+	// client-side as a scrubbable tape; nil for sections without baked frames.
+	Frames json.RawMessage `json:"frames,omitempty"`
 }
 
 type dashboardData struct {
@@ -244,6 +249,33 @@ const dashboardSource = `<!DOCTYPE html>
   .method .m b .tag { color:var(--c,var(--phos)); }
   .colophon { margin-top:1.4rem; color:var(--faint); font-size:.64rem; letter-spacing:.1em; text-align:center; }
   .colophon b { color:var(--phos-dim); }
+  /* ── "what survived" glass-to-glass filmstrip (per-cell baked frames) ── */
+  .gtape { margin:.3rem 0 .9rem; border:1px solid var(--line); border-radius:4px; overflow:hidden; background:#04060a; }
+  .gtape .gth { display:flex; align-items:center; gap:.5rem; padding:.5rem .7rem; border-bottom:1px solid var(--line);
+                font-size:.56rem; letter-spacing:.22em; text-transform:uppercase; color:var(--cyan); }
+  .gtape .gth .gdp { margin-left:auto; color:var(--muted); letter-spacing:.08em; text-transform:none; font-size:.62rem; }
+  .gmon { position:relative; aspect-ratio:16/9; max-width:540px; margin:0 auto; background:#000; overflow:hidden;
+          border-bottom:1px solid var(--line); }
+  .gmon img { width:100%; height:100%; object-fit:cover; display:block; transition:opacity .12s; }
+  .gmon .glost { position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:.3rem;
+                 background:repeating-linear-gradient(0deg,#0c0c0c,#0c0c0c 2px,#050505 2px,#050505 4px); color:var(--red);
+                 font-size:.66rem; letter-spacing:.22em; text-shadow:0 0 12px rgba(255,79,79,.5); }
+  .gmon .glost small { color:var(--muted); font-size:.5rem; letter-spacing:.12em; }
+  .gmon.lost .glost { display:flex; } .gmon.lost img { opacity:.12; filter:grayscale(1); }
+  .gmon .gtc { position:absolute; left:.5rem; bottom:.45rem; font-size:.52rem; letter-spacing:.12em; color:var(--ink2);
+               background:rgba(0,0,0,.6); padding:.12rem .45rem; border-radius:2px; }
+  .gstrip { display:flex; gap:2px; padding:.4rem; background:#070a0e; }
+  .gslot { position:relative; flex:1; aspect-ratio:16/9; background:#000; cursor:crosshair; overflow:hidden;
+           outline:1px solid transparent; outline-offset:-1px; }
+  .gslot img { width:100%; height:100%; object-fit:cover; display:block; }
+  .gslot.lost { background:repeating-linear-gradient(0deg,#140707,#140707 1px,#050505 1px,#050505 3px); }
+  .gslot.lost::after { content:""; position:absolute; inset:0; box-shadow:inset 0 0 0 1px rgba(255,79,79,.22); }
+  .gslot.cur { outline-color:var(--cyan); z-index:2; }
+  .gribbon { padding:.45rem .5rem .55rem; }
+  .gribbon .grow { position:relative; height:9px; border-radius:2px; background:#0a0a0a; overflow:hidden; border:1px solid var(--line); }
+  .gribbon .grow i { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(90deg,rgba(47,224,138,.55),var(--phos)); box-shadow:0 0 10px -2px var(--phos); }
+  .gribbon .glab { display:flex; justify-content:space-between; margin-top:.3rem; font-size:.56rem; letter-spacing:.06em; color:var(--muted); }
+  .gribbon .glab .av { color:var(--phos); }
 </style>
 </head>
 <body>
@@ -400,7 +432,7 @@ const dashboardSource = `<!DOCTYPE html>
       var td=ev.target.closest("td.sel-able"); if(!td)return;
       var m=DATA.sections[+td.dataset.si].matrix;
       var res=cellFor(m,td.dataset.lib,td.dataset.scn);
-      if(res) showReadout(td.dataset.lib,td.dataset.scn,res,td);
+      if(res) showReadout(td.dataset.lib,td.dataset.scn,res,td,+td.dataset.si);
     });
   }
   buildCompare();
@@ -474,7 +506,38 @@ const dashboardSource = `<!DOCTYPE html>
     }
     return h;
   }
-  function showReadout(lib,scn,res,td){
+  // framesFor returns a cell's baked "what survived" filmstrip data (or null).
+  function framesFor(si,lib,scn){ var s=DATA.sections[si]; if(!s||!s.frames)return null; var l=s.frames[lib]; return l?(l[scn]||null):null; }
+  // whatSurvived renders the glass-to-glass filmstrip as a TIMELINE: live thumbs
+  // for the delivered fraction, "signal lost" slots for the rest, with the
+  // audio-survival ribbon running underneath — so a collapse reads as the picture
+  // going dark while audio (the green ribbon) continues past the last good frame.
+  function whatSurvived(fr){
+    var thumbs=fr.thumbs||[]; if(!thumbs.length) return "";
+    var N=8, cl=function(x){return Math.max(0,Math.min(100,x==null?100:x));};
+    var dp=cl(fr.deliveredPct), ap=cl(fr.audioPct);
+    var live=Math.max(1,Math.min(N,Math.round(N*dp/100)));
+    var slots=[];
+    for(var i=0;i<N;i++){
+      if(i<live) slots.push({src:thumbs[Math.min(thumbs.length-1,Math.floor(i*thumbs.length/live))]});
+      else slots.push({lost:true});
+    }
+    var lastSrc=slots[live-1]&&slots[live-1].src;
+    var h='<div class="gtape">';
+    h+='<div class="gth">What survived · glass-to-glass<span class="gdp">'+fmt(Math.round(dp))+'% picture'+(fr.keyframes!=null?' · '+fmt(fr.keyframes)+' keyframes':'')+'</span></div>';
+    h+='<div class="gmon'+(lastSrc?'':' lost')+'"><img src="'+(lastSrc||'')+'" alt=""><div class="glost">▣ SIGNAL LOST<small>picture gone · audio continues</small></div><div class="gtc">last good frame</div></div>';
+    h+='<div class="gstrip">';
+    slots.forEach(function(s,i){
+      if(s.lost) h+='<div class="gslot lost" data-i="'+i+'"></div>';
+      else h+='<div class="gslot'+(i===live-1?' cur':'')+'" data-i="'+i+'" data-src="'+s.src+'"><img src="'+s.src+'" alt=""></div>';
+    });
+    h+='</div>';
+    h+='<div class="gribbon"><div class="grow"><i style="width:'+ap+'%"></i></div>'+
+       '<div class="glab"><span>video '+fmt(Math.round(dp))+'%</span><span class="av">audio '+fmt(Math.round(ap))+'% — survives past the last frame</span></div></div>';
+    h+='</div>';
+    return h;
+  }
+  function showReadout(lib,scn,res,td,si){
     if(selected) selected.classList.remove("sel");
     selected = (td&&td.querySelector(".v")) || td; if(selected) selected.classList.add("sel");
     var rv=rollup(res), v=V[rv];
@@ -482,6 +545,7 @@ const dashboardSource = `<!DOCTYPE html>
     h+='<div class="ro-coord"><span class="lib">'+lib+'</span><span class="x">▸</span><span class="scn">'+scn+'</span></div>';
     h+='<div class="ro-sub">'+(res.checks?res.checks.length:0)+' invariant'+((res.checks&&res.checks.length===1)?"":"s")+' · rollup = '+v.k+'</div>';
     h+=qoeBand(res.metrics||{});
+    var fr=(si!=null)?framesFor(si,lib,scn):null; if(fr) h+=whatSurvived(fr);
     (res.checks||[]).forEach(function(c){
       var cv=V[c.verdict];
       h+='<div class="check '+cv.cls+'"><span class="cv"></span><div><span class="cname">'+c.name+'</span> <span class="cverd">'+(cv.ab||cv.k)+'</span>'+
@@ -496,6 +560,19 @@ const dashboardSource = `<!DOCTYPE html>
     if(res.error) h+='<div class="ro-err">ERROR · '+escapeHtml(res.error)+'</div>';
     h+='</div>';
     ro.innerHTML=h;
+    // Scrub the filmstrip: hovering a slot drives the program monitor; lost slots
+    // black it out (the freeze/desync made tactile).
+    var tape=ro.querySelector(".gtape");
+    if(tape){
+      var mon=tape.querySelector(".gmon"), monImg=mon.querySelector("img"), tc=mon.querySelector(".gtc"), slots=tape.querySelectorAll(".gslot");
+      slots.forEach(function(sl){
+        sl.addEventListener("mouseenter",function(){
+          slots.forEach(function(x){x.classList.remove("cur");}); sl.classList.add("cur");
+          if(sl.classList.contains("lost")){ mon.classList.add("lost"); tc.textContent="signal lost · "+(+sl.dataset.i+1)+"/"+slots.length; }
+          else { mon.classList.remove("lost"); monImg.src=sl.dataset.src; tc.textContent="frame "+(+sl.dataset.i+1)+"/"+slots.length; }
+        });
+      });
+    }
     if(window.matchMedia("(max-width:960px)").matches) ro.scrollIntoView({behavior:"smooth",block:"nearest"});
   }
   function escapeHtml(s){ return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
@@ -529,7 +606,7 @@ const dashboardSource = `<!DOCTYPE html>
         vd.innerHTML='<span class="dot"></span><span class="lab">'+(v.ab||v.k)+'</span>';
         vd.style.animationDelay=(ri*30+0)+"ms";
         td.appendChild(vd);
-        td.addEventListener("click",function(){ showReadout(lib,scn,res,td); });
+        td.addEventListener("click",function(){ showReadout(lib,scn,res,td,si); });
         tr.appendChild(td);
       });
       tb.appendChild(tr);
