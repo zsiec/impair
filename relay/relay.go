@@ -76,22 +76,58 @@ type Relay struct {
 	wake  chan struct{} // buffered(1): a new head was enqueued; egress should re-check
 	pool  sync.Pool     // *[]byte (cap maxDatagram) forward buffers
 
+	// ledger is the opt-in OWD relay-ledger (see ledger.go). nil == OFF: the hot
+	// path checks for nil and does nothing, so an un-enabled relay pays zero cost.
+	// Held atomically so EnableLedger can flip it on at runtime without racing the
+	// loop/egress goroutines that read it per packet.
+	ledger atomic.Pointer[ledger]
+
 	closed    chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
 }
 
+// defaultLedgerCap bounds the OWD ledger ring when enabled without an explicit
+// size. Tied to maxQueued: the ledger need only span as many packets as can be
+// in flight (scheduled-but-not-sent) plus recent history, so the ring can hold
+// the full in-flight set and a like amount of just-delivered records.
+const defaultLedgerCap = 16384
+
+// RelayOption configures a Relay at construction (New / NewOn). Options are
+// additive and order-independent; the zero set leaves all behavior unchanged.
+type RelayOption func(*relayConfig)
+
+type relayConfig struct {
+	ledgerCap int // >0 enables the OWD ledger with this ring capacity
+}
+
+// WithLedger enables the OWD relay-ledger at construction with a ring capacity
+// of capacity entries (<=0 uses defaultLedgerCap). Without this option (or a
+// later EnableLedger call) the ledger stays OFF and adds no per-packet cost.
+func WithLedger(capacity int) RelayOption {
+	return func(c *relayConfig) {
+		if capacity <= 0 {
+			capacity = defaultLedgerCap
+		}
+		c.ledgerCap = capacity
+	}
+}
+
 // New binds a relay socket on a free 127.0.0.1 port and forwards to upstreamAddr
 // through eng. The sender address is learned from the first non-upstream
 // datagram. tap may be nil.
-func New(eng *engine.Engine, upstreamAddr string, tap Tap) (*Relay, error) {
-	return NewOn(eng, "127.0.0.1:0", upstreamAddr, tap)
+func New(eng *engine.Engine, upstreamAddr string, tap Tap, opts ...RelayOption) (*Relay, error) {
+	return NewOn(eng, "127.0.0.1:0", upstreamAddr, tap, opts...)
 }
 
 // NewOn is New with an explicit bind address — needed for protocols that derive
 // peer ports from a base (e.g. RIST Simple Profile uses RTP on an even port and
 // RTCP on port+1, so a dual-port relay must bind a specific even/odd pair).
-func NewOn(eng *engine.Engine, bindAddr, upstreamAddr string, tap Tap) (*Relay, error) {
+func NewOn(eng *engine.Engine, bindAddr, upstreamAddr string, tap Tap, opts ...RelayOption) (*Relay, error) {
+	var cfg relayConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	up, err := net.ResolveUDPAddr("udp", upstreamAddr)
 	if err != nil {
 		return nil, err
@@ -113,10 +149,40 @@ func NewOn(eng *engine.Engine, bindAddr, upstreamAddr string, tap Tap) (*Relay, 
 		pool:   sync.Pool{New: func() any { b := make([]byte, maxDatagram); return &b }},
 	}
 	r.eng.Store(eng)
+	if cfg.ledgerCap > 0 {
+		r.ledger.Store(newLedger(cfg.ledgerCap))
+	}
 	r.wg.Add(2)
 	go r.loop()
 	go r.egress()
 	return r, nil
+}
+
+// EnableLedger turns on the OWD relay-ledger at runtime (the opt-in alternative
+// to the WithLedger construction option), bounding it to a ring of capacity
+// entries (<=0 uses defaultLedgerCap). It is idempotent in spirit but
+// REPLACES any existing ledger with a fresh empty one, so callers that already
+// enabled it via WithLedger need not call this. Packets enqueued before the
+// switch were never recorded; ones whose send straddles the switch finalize
+// against whichever ledger was current at enqueue (the handle is inert against
+// the new ledger), so no cross-ledger corruption occurs.
+func (r *Relay) EnableLedger(capacity int) {
+	if capacity <= 0 {
+		capacity = defaultLedgerCap
+	}
+	r.ledger.Store(newLedger(capacity))
+}
+
+// Ledger returns a snapshot copy of the recorded OWD entries (oldest first), or
+// nil if the ledger was never enabled. The copy is independent of the relay's
+// internal ring, so the caller may hold and mutate it freely while the relay
+// keeps running. Feed it to DecomposedOWD to attribute one-way delay.
+func (r *Relay) Ledger() []Entry {
+	l := r.ledger.Load()
+	if l == nil {
+		return nil
+	}
+	return l.snapshot()
 }
 
 // Addr is the relay's listen address (what the sender dials).
@@ -186,14 +252,18 @@ func (r *Relay) loop() {
 				r.drop.Add(1)
 				continue
 			}
-			r.enqueue(a.Data, dst, a.DeliverAt)
+			r.enqueue(a.Data, dst, a.DeliverAt, a.Seq, dir, recvAt)
 		}
 	}
 }
 
 // enqueue copies a forward payload into a pooled buffer and pushes it on the
 // egress heap, waking the egress goroutine if this forward is now the soonest.
-func (r *Relay) enqueue(data []byte, dst netip.AddrPort, at int64) {
+// seq/dir/recvAt are the OWD-ledger fields (engine ingress seq, direction, and
+// ingress time off r.base); they are recorded only when the ledger is enabled
+// and the forward is actually admitted (tail-dropped forwards are not recorded,
+// so the ledger never carries a packet that left no residence).
+func (r *Relay) enqueue(data []byte, dst netip.AddrPort, at int64, seq uint64, dir engine.Direction, recvAt int64) {
 	bp := r.getBuf(len(data))
 	copy((*bp)[:len(data)], data)
 
@@ -205,7 +275,10 @@ func (r *Relay) enqueue(data []byte, dst netip.AddrPort, at int64) {
 		return
 	}
 	r.egOrd++
-	it := egItem{at: at, ord: r.egOrd, buf: bp, n: len(data), dst: dst}
+	it := egItem{at: at, ord: r.egOrd, buf: bp, n: len(data), dst: dst, led: noHandle}
+	if l := r.ledger.Load(); l != nil { // OFF unless enabled: no cost otherwise
+		it.led = l.start(seq, dir, recvAt, at)
+	}
 	heap.Push(&r.eg, it)
 	isHead := r.eg[0].ord == it.ord
 	r.egMu.Unlock()
@@ -267,6 +340,11 @@ func (r *Relay) send(it egItem) {
 	default:
 	}
 	_, _ = r.pc.WriteToUDPAddrPort((*it.buf)[:it.n], it.dst)
+	if it.led.slot >= 0 { // ledger was on at enqueue: stamp actual egress time
+		if l := r.ledger.Load(); l != nil {
+			l.finalize(it.led, time.Since(r.base).Nanoseconds())
+		}
+	}
 	r.fwd.Add(1)
 	r.putBuf(it.buf)
 }
@@ -313,6 +391,7 @@ type egItem struct {
 	buf *[]byte
 	n   int
 	dst netip.AddrPort
+	led ledgerHandle // OWD-ledger handle; noHandle (slot -1) when the ledger is off
 }
 
 type egHeap []egItem
