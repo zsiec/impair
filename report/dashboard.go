@@ -276,6 +276,20 @@ const dashboardSource = `<!DOCTYPE html>
   .gribbon .grow i { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(90deg,rgba(47,224,138,.55),var(--phos)); box-shadow:0 0 10px -2px var(--phos); }
   .gribbon .glab { display:flex; justify-content:space-between; margin-top:.3rem; font-size:.56rem; letter-spacing:.06em; color:var(--muted); }
   .gribbon .glab .av { color:var(--phos); }
+  /* grid cells with a baked filmstrip carry a marker + a hover preview that PLAYS the degradation */
+  .grid td.hasfilm { position:relative; }
+  .grid td.hasfilm::after { content:"▶"; position:absolute; top:3px; right:5px; font-size:.46rem; color:var(--cyan); opacity:.55; }
+  .gpop { position:fixed; display:none; z-index:60; width:248px; background:#04060a; border:1px solid var(--cyan); border-radius:4px;
+          box-shadow:0 20px 54px -22px #000, 0 0 22px -10px rgba(110,231,255,.4); overflow:hidden; pointer-events:none; }
+  .gpop .gpmon { position:relative; aspect-ratio:16/9; background:#000; }
+  .gpop .gpmon img { width:100%; height:100%; object-fit:cover; display:block; }
+  .gpop .gplost { position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:var(--red);
+                  font-size:.6rem; letter-spacing:.2em; text-shadow:0 0 12px rgba(255,79,79,.5);
+                  background:repeating-linear-gradient(0deg,#0c0c0c,#0c0c0c 2px,#050505 2px,#050505 4px); }
+  .gpop .gpmon.lost .gplost { display:flex; } .gpop .gpmon.lost img { opacity:.1; filter:grayscale(1); }
+  .gpop .gpbar { position:relative; height:6px; background:#0a0a0a; } .gpop .gpbar i { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(90deg,rgba(47,224,138,.6),var(--phos)); }
+  .gpop .gplab { padding:.32rem .55rem; font-size:.56rem; letter-spacing:.05em; color:var(--muted); display:flex; justify-content:space-between; }
+  .gpop .gplab b { color:var(--cyan); } .gpop .gplab .av { color:var(--phos); }
 </style>
 </head>
 <body>
@@ -537,6 +551,35 @@ const dashboardSource = `<!DOCTYPE html>
     h+='</div>';
     return h;
   }
+  // ── grid hover preview: PLAY the "what survived" degradation in a floating card ──
+  var gpop=null, gpopTimer=null;
+  function ensureGpop(){
+    if(gpop) return gpop;
+    gpop=document.createElement("div"); gpop.className="gpop";
+    gpop.innerHTML='<div class="gpmon"><img alt=""><div class="gplost">▣ SIGNAL LOST</div></div>'+
+      '<div class="gpbar"><i></i></div><div class="gplab"><span class="vd"></span><span class="av"></span></div>';
+    document.body.appendChild(gpop);
+    return gpop;
+  }
+  function gpopShow(fr,td){
+    var thumbs=fr.thumbs||[]; if(!thumbs.length) return;
+    var p=ensureGpop(), cl=function(x){return Math.max(0,Math.min(100,x==null?100:x));};
+    var dp=cl(fr.deliveredPct), ap=cl(fr.audioPct), N=8, live=Math.max(1,Math.min(N,Math.round(N*dp/100)));
+    var seq=[]; for(var i=0;i<N;i++){ seq.push(i<live?thumbs[Math.min(thumbs.length-1,Math.floor(i*thumbs.length/live))]:null); }
+    var mon=p.querySelector(".gpmon"), img=p.querySelector("img");
+    p.querySelector(".gpbar i").style.width=ap+"%";
+    p.querySelector(".gplab .vd").innerHTML='<b>'+fmt(Math.round(dp))+'%</b> picture';
+    p.querySelector(".gplab .av").textContent='audio '+fmt(Math.round(ap))+'%';
+    var k=0; function step(){ var s=seq[k%seq.length]; if(s){ mon.classList.remove("lost"); img.src=s; } else mon.classList.add("lost"); k++; }
+    step(); clearInterval(gpopTimer); gpopTimer=setInterval(step,300);
+    p.style.display="block";
+    var r=td.getBoundingClientRect(), pw=248, ph=p.offsetHeight||168;
+    var left=Math.min(window.innerWidth-pw-8,Math.max(8,r.left-20)), top=r.top-ph-10;
+    if(top<8) top=r.bottom+10;
+    p.style.left=left+"px"; p.style.top=top+"px";
+  }
+  function gpopHide(){ if(gpopTimer){clearInterval(gpopTimer);gpopTimer=null;} if(gpop)gpop.style.display="none"; }
+
   function showReadout(lib,scn,res,td,si){
     if(selected) selected.classList.remove("sel");
     selected = (td&&td.querySelector(".v")) || td; if(selected) selected.classList.add("sel");
@@ -607,6 +650,12 @@ const dashboardSource = `<!DOCTYPE html>
         vd.style.animationDelay=(ri*30+0)+"ms";
         td.appendChild(vd);
         td.addEventListener("click",function(){ showReadout(lib,scn,res,td,si); });
+        var fr=framesFor(si,lib,scn);
+        if(fr&&fr.thumbs&&fr.thumbs.length){ // glass-to-glass cell — hover plays what survived
+          td.classList.add("hasfilm");
+          td.addEventListener("mouseenter",function(){ gpopShow(fr,td); });
+          td.addEventListener("mouseleave",gpopHide);
+        }
         tr.appendChild(td);
       });
       tb.appendChild(tr);
