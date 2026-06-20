@@ -40,8 +40,9 @@ type Relay struct {
 	sender *net.UDPAddr
 	stats  Stats
 
-	closed chan struct{}
-	wg     sync.WaitGroup
+	closed    chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // New binds a relay socket on 127.0.0.1 and forwards to upstreamAddr through eng.
@@ -154,12 +155,16 @@ func (r *Relay) schedule(pkt []byte, dst *net.UDPAddr, delay int64) {
 }
 
 // Close stops the relay and waits for in-flight scheduled forwards to drain.
+// It is idempotent (safe to call explicitly before reading the observer and
+// again via defer).
 func (r *Relay) Close() {
-	close(r.closed)
-	_ = r.pc.SetReadDeadline(time.Now())
-	time.Sleep(50 * time.Millisecond) // let scheduled forwards fire
-	_ = r.pc.Close()
-	r.wg.Wait()
+	r.closeOnce.Do(func() {
+		close(r.closed)
+		_ = r.pc.SetReadDeadline(time.Now())
+		time.Sleep(50 * time.Millisecond) // let scheduled forwards fire
+		_ = r.pc.Close()
+		r.wg.Wait()
+	})
 }
 
 func udpEqual(a, b *net.UDPAddr) bool {

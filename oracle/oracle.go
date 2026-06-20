@@ -25,6 +25,11 @@ type Input struct {
 	RelayDropped  uint64
 	Obs           wire.Observation
 	Metrics       map[string]float64
+	// Opaque marks a black-box SUT (e.g. libsrt run as a subprocess) whose
+	// application-level delivery/integrity we cannot measure. For these, the
+	// delivery oracles report n/a and ARQ is judged from wire facts alone — the
+	// protocol-aware observer still works on an opaque implementation.
+	Opaque bool
 }
 
 // Evaluate runs every named oracle against the input and returns one
@@ -57,9 +62,9 @@ func handshakeCompleted(in Input) result.Check {
 	case in.Obs.Handshakes > 0:
 		c.Verdict = result.Pass
 		c.Detail = fmt.Sprintf("%d handshake packet(s) observed", in.Obs.Handshakes)
-	case in.SentMsgs > 0:
+	case in.SentMsgs > 0 || in.Opaque:
 		c.Verdict = result.Fail
-		c.Detail = "connection never established (no handshake observed despite traffic)"
+		c.Detail = "connection never established (no handshake observed despite a connection attempt)"
 	default:
 		c.Verdict = result.Error
 		c.Detail = "no handshake and no messages sent — run produced no evidence"
@@ -70,6 +75,11 @@ func handshakeCompleted(in Input) result.Check {
 // 2. delivery-integrity: no message may be delivered corrupted.
 func deliveryIntegrity(in Input) result.Check {
 	c := result.Check{Name: "delivery-integrity"}
+	if in.Opaque {
+		c.Verdict = result.Pass
+		c.Detail = "n/a (opaque SUT — application delivery not measured)"
+		return c
+	}
 	if in.CorruptMsgs == 0 {
 		c.Verdict = result.Pass
 		c.Detail = "no corrupt messages delivered"
@@ -84,6 +94,11 @@ func deliveryIntegrity(in Input) result.Check {
 // ratio is reported but completeness is not asserted (live mode tolerates loss).
 func deliveryComplete(in Input) result.Check {
 	c := result.Check{Name: "delivery-complete"}
+	if in.Opaque {
+		c.Verdict = result.Pass
+		c.Detail = "n/a (opaque SUT — application delivery not measured)"
+		return c
+	}
 	if in.LossInjected {
 		c.Verdict = result.Pass
 		c.Detail = fmt.Sprintf("delivered %d/%d (loss injected; completeness not asserted under loss)",
@@ -105,9 +120,32 @@ func deliveryComplete(in Input) result.Check {
 // must have been exercised to recover delivery.
 func arqEngagedUnderLoss(in Input) result.Check {
 	c := result.Check{Name: "arq-engaged-under-loss"}
-	if !in.LossInjected || in.SentMsgs == 0 {
+	if !in.LossInjected {
 		c.Verdict = result.Pass
 		c.Detail = "n/a (no loss injected)"
+		return c
+	}
+	if in.Opaque {
+		// Wire-only judgement: no delivery counts, so we can confirm ARQ was
+		// exercised but never Fail on completeness.
+		switch {
+		case in.Obs.NAKs > 0 && in.Obs.Retransmitted > 0:
+			c.Verdict = result.Pass
+			c.Detail = fmt.Sprintf("ARQ active: %d NAK(s), %d retransmit(s) (opaque SUT; delivery not measured)",
+				in.Obs.NAKs, in.Obs.Retransmitted)
+		case in.RelayDropped == 0:
+			c.Verdict = result.Pass
+			c.Detail = "no packets dropped on the wire (loss profile did not bite this run)"
+		default:
+			c.Verdict = result.Warn
+			c.Detail = fmt.Sprintf("no ARQ activity under wire loss (%d dropped): %d NAK(s), %d retransmit(s)",
+				in.RelayDropped, in.Obs.NAKs, in.Obs.Retransmitted)
+		}
+		return c
+	}
+	if in.SentMsgs == 0 {
+		c.Verdict = result.Pass
+		c.Detail = "n/a (no messages sent)"
 		return c
 	}
 

@@ -196,3 +196,43 @@ func TestResultForRollup(t *testing.T) {
 		t.Errorf("error rollup = %v, want Error", v)
 	}
 }
+
+// Opaque (black-box) SUTs: delivery oracles are n/a; wire oracles still apply.
+func TestOpaqueWireOnly(t *testing.T) {
+	in := base()
+	in.Opaque = true
+	in.LossInjected = true
+	in.SentMsgs = 0
+	in.DeliveredMsgs = 0
+	in.RelayDropped = 50
+	in.Obs.NAKs = 10
+	in.Obs.Retransmitted = 25
+	checks := byName(Evaluate(in))
+	if got := checks["delivery-integrity"].Verdict; got != result.Pass {
+		t.Errorf("delivery-integrity opaque = %v, want Pass (n/a)", got)
+	}
+	if got := checks["delivery-complete"].Verdict; got != result.Pass {
+		t.Errorf("delivery-complete opaque = %v, want Pass (n/a)", got)
+	}
+	if got := checks["arq-engaged-under-loss"].Verdict; got != result.Pass {
+		t.Errorf("arq opaque w/ NAK+retx = %v, want Pass", got)
+	}
+	// Opaque with loss but no ARQ activity -> Warn (cannot Fail without delivery data).
+	in.Obs.NAKs, in.Obs.Retransmitted = 0, 0
+	if got := byName(Evaluate(in))["arq-engaged-under-loss"].Verdict; got != result.Warn {
+		t.Errorf("arq opaque no-activity = %v, want Warn", got)
+	}
+	// Opaque with no handshake observed -> Fail (a connection was attempted).
+	in.Obs.Handshakes = 0
+	if got := byName(Evaluate(in))["handshake-completed"].Verdict; got != result.Fail {
+		t.Errorf("handshake opaque none = %v, want Fail", got)
+	}
+}
+
+func byName(cs []result.Check) map[string]result.Check {
+	m := map[string]result.Check{}
+	for _, c := range cs {
+		m[c.Name] = c
+	}
+	return m
+}
