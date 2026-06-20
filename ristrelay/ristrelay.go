@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zsiec/impair/engine"
@@ -29,8 +30,8 @@ type Stats struct {
 // Relay proxies a RIST Simple-Profile sender<->receiver through eng.
 type Relay struct {
 	rtp, rtcp         *net.UDPConn
-	recvRTP, recvRTCP *net.UDPAddr // the receiver's media (P) and RTCP (P+1)
-	eng               *engine.Engine
+	recvRTP, recvRTCP *net.UDPAddr                  // the receiver's media (P) and RTCP (P+1)
+	eng               atomic.Pointer[engine.Engine] // live-swappable (SetEngine) for interactive tuning
 	tap               Tap
 	base              time.Time
 
@@ -61,13 +62,18 @@ func New(eng *engine.Engine, recvMediaAddr string, tap Tap) (*Relay, error) {
 	}
 	r := &Relay{
 		rtp: rtp, rtcp: rtcp, recvRTP: rp, recvRTCP: rc,
-		eng: eng, tap: tap, base: time.Now(), closed: make(chan struct{}),
+		tap: tap, base: time.Now(), closed: make(chan struct{}),
 	}
+	r.eng.Store(eng)
 	r.wg.Add(2)
 	go r.mediaLoop()
 	go r.rtcpLoop()
 	return r, nil
 }
+
+// SetEngine swaps the impairment engine live (interactive tuning); the next RTP
+// packet is impaired by eng. Mirrors relay.Relay.SetEngine.
+func (r *Relay) SetEngine(eng *engine.Engine) { r.eng.Store(eng) }
 
 // RTPAddr is the even media port the sender dials; it derives RTCP as RTPAddr+1.
 func (r *Relay) RTPAddr() string { return r.rtp.LocalAddr().String() }
@@ -123,7 +129,7 @@ func (r *Relay) mediaLoop() {
 			dst = r.recvRTP
 		}
 
-		for _, a := range r.eng.Handle(engine.Packet{Data: data, Dir: dir}, recvAt) {
+		for _, a := range r.eng.Load().Handle(engine.Packet{Data: data, Dir: dir}, recvAt) {
 			if a.Kind == engine.Drop {
 				r.mu.Lock()
 				r.stats.Dropped++
