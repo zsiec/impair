@@ -1,0 +1,9 @@
+fec-golden v1
+L=5 D=4 1-D lost=[0 1 2] -> recovered=[0 1 2] residual=[]
+L=5 D=4 1-D lost=[0 5] -> recovered=[] residual=[0 5]
+L=5 D=4 2-D lost=[0 5] -> recovered=[0 5] residual=[]
+L=5 D=4 2-D lost=[0 1 5 6] -> recovered=[] residual=[0 1 5 6]
+L=5 D=4 1-D lost=[0 1 2 3 4] -> recovered=[0 1 2 3 4] residual=[]
+L=5 D=4 1-D lost=[0 1 2 3 4 5] -> recovered=[1 2 3 4] residual=[0 5]
+L=5 D=4 2-D lost=[0 1 2 3 4 5] -> recovered=[0 1 2 3 4 5] residual=[]
+L=10 D=5 1-D lost=[3 7 22] -> recovered=[3 7 22] residual=[]

@@ -22,8 +22,10 @@ tidy:
 schedule-golden:
 	go test ./scenario/ -run 'TestScheduleGolden|TestDeterministicAcrossRuns' -count=1
 	go test ./bond/ -run 'TestBondGolden|TestBondDeterministic|TestBondMaskingProvable|TestBondIndependence|TestBondNegativeControl' -count=1
+	go test ./fec/ -run 'TestFECGolden|TestRecover|TestRecoverOrderIndependent|TestFECFromDroplist|TestOracleNegativeControls' -count=1
 
 # Regenerate the committed goldens after an intentional behavior change.
 update-golden:
 	UPDATE_GOLDEN=1 go test ./scenario/ -run TestScheduleGolden -count=1
 	UPDATE_GOLDEN=1 go test ./bond/ -run TestBondGolden -count=1
+	UPDATE_GOLDEN=1 go test ./fec/ -run TestFECGolden -count=1
