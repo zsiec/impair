@@ -112,6 +112,24 @@ const dashboardSource = `<!DOCTYPE html>
   .legend .sw { width:11px; height:11px; border-radius:2px; box-shadow:0 0 8px var(--c); background:var(--c); }
   .legend .note { margin-left:auto; color:var(--faint); font-style:italic; letter-spacing:.04em; text-transform:none; }
 
+  /* ── run-launcher (cockpit only) ───────────────────────── */
+  .launcher { border:1px solid var(--phos-dim); background:linear-gradient(180deg,rgba(47,224,138,.05),transparent); margin:1.4rem 0 .2rem; }
+  .launcher .lh { display:flex; align-items:center; gap:.7rem; padding:.7rem 1.1rem; border-bottom:1px solid var(--line); }
+  .launcher .lh .t { font-size:.62rem; letter-spacing:.24em; text-transform:uppercase; color:var(--phos); }
+  .launcher .lh .live { font-size:.58rem; color:var(--muted); letter-spacing:.1em; margin-left:auto; }
+  .launcher .lh .live::before { content:"●"; color:var(--phos); margin-right:.4em; animation:blink 2.4s steps(1) infinite; }
+  .launcher .lbody { padding:.8rem 1.1rem; }
+  .runbtns { display:flex; flex-wrap:wrap; gap:.45rem; }
+  .runbtns button { font-family:var(--mono); font-size:.64rem; letter-spacing:.06em; text-transform:uppercase; color:var(--ink);
+    background:var(--panel); border:1px solid var(--line); padding:.4rem .7rem; cursor:pointer; transition:.12s; }
+  .runbtns button:hover:not(:disabled){ border-color:var(--phos-dim); color:var(--phos); box-shadow:0 0 12px -4px var(--phos); }
+  .runbtns button:disabled{ opacity:.4; cursor:default; }
+  .runbtns button .nd{ color:var(--faint); } .runbtns button.has .nd{ color:var(--phos); }
+  .runconsole { margin-top:.7rem; background:#05070a; border:1px solid var(--line); color:var(--ink); font-size:.66rem; line-height:1.5;
+    padding:.6rem .7rem; max-height:200px; overflow:auto; white-space:pre-wrap; display:none; }
+  .runconsole.show{ display:block; }
+  .runconsole .rdone{ color:var(--phos); } .runconsole .rrun{ color:var(--amber); }
+
   /* ── cross-protocol resilience comparison ──────────────── */
   .compare { border:1px solid var(--line); background:linear-gradient(180deg,rgba(54,207,224,.04),transparent); margin:1.4rem 0 .2rem; }
   .compare .cmp-head { display:flex; align-items:baseline; gap:.8rem; flex-wrap:wrap; padding:.95rem 1.1rem .7rem; border-bottom:1px solid var(--line);
@@ -242,6 +260,7 @@ const dashboardSource = `<!DOCTYPE html>
   <div class="status" id="status"></div>
   <div class="legend" id="legend"></div>
 
+  <section class="launcher" id="launcher" style="display:none"></section>
   <section class="compare" id="compare"></section>
 
   <div class="deck">
@@ -385,6 +404,42 @@ const dashboardSource = `<!DOCTYPE html>
     });
   }
   buildCompare();
+
+  // ── run-launcher (only when served by the cockpit; static file has no API) ──
+  function buildLauncher(){
+    fetch("/api/run/targets").then(function(r){return r.ok?r.json():Promise.reject();}).then(function(targets){
+      var host=document.getElementById("launcher"); host.style.display="";
+      host.innerHTML='<div class="lh"><span class="t">Run launcher</span><span class="live">cockpit</span></div>'+
+        '<div class="lbody"><div class="runbtns" id="runbtns"></div><div class="runconsole" id="runconsole"></div></div>';
+      var btns=document.getElementById("runbtns");
+      targets.forEach(function(t){
+        var b=document.createElement("button"); if(t.hasData)b.className="has";
+        b.innerHTML='▶ '+escapeHtml(t.label)+' <span class="nd">'+(t.hasData?"●":"○")+'</span>';
+        b.onclick=function(){ startRun(t.key); };
+        btns.appendChild(b);
+      });
+    }).catch(function(){ /* static file (no cockpit API): leave launcher hidden */ });
+  }
+  function startRun(key){
+    document.querySelectorAll("#runbtns button").forEach(function(b){ b.disabled=true; });
+    var con=document.getElementById("runconsole"); con.className="runconsole show"; con.textContent="starting "+key+" …";
+    fetch("/api/run",{method:"POST",body:JSON.stringify({target:key})}).then(function(r){
+      if(!r.ok) return r.text().then(function(t){ throw t; });
+      pollRun();
+    }).catch(function(e){ con.textContent="error: "+e; document.querySelectorAll("#runbtns button").forEach(function(b){ b.disabled=false; }); });
+  }
+  function pollRun(){
+    fetch("/api/run/status").then(function(r){return r.json();}).then(function(s){
+      var con=document.getElementById("runconsole");
+      con.textContent=(s.log||"")+(s.running?"\n[ running "+s.elapsed+"s ]":"");
+      con.scrollTop=con.scrollHeight;
+      if(s.done && !s.running){
+        con.textContent+="\n— reloading dashboard with fresh results —";
+        setTimeout(function(){ location.reload(); }, 900);
+      } else { setTimeout(pollRun, 700); }
+    }).catch(function(){ setTimeout(pollRun, 1500); });
+  }
+  buildLauncher();
 
   // ── readout ──
   var ro=document.getElementById("readout");
