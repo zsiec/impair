@@ -42,12 +42,21 @@ type Packet struct {
 // (corruption) and DeliverAt (delay/jitter/reorder), return zero outputs (drop),
 // or return more than one (duplication). Seq is a monotonic ingress id assigned
 // by the engine; duplicates produced by a cell share their parent's Seq.
+//
+// TIME-BASE CONVENTION (load-bearing for correct cell composition): a cell that
+// affects timing MUST compute relative to in.DeliverAt — the packet's arrival
+// time AT THIS STAGE, already reflecting all upstream cells' delays — and never
+// relative to RecvAt. RecvAt is the immutable original ingress time, used only
+// as the floor (a cell must never set DeliverAt < RecvAt) and for provenance.
+// Keying off RecvAt would teleport the packet back to ingress, discarding every
+// upstream delay (e.g. a rate limiter must queue packets when they actually
+// reach it, not when they first entered the relay).
 type InFlight struct {
 	Seq       uint64
 	Dir       Direction
 	Data      []byte
-	RecvAt    int64 // ns, virtual ingress time (immutable)
-	DeliverAt int64 // ns, when the driver should forward it (>= RecvAt)
+	RecvAt    int64 // ns, virtual ingress time (immutable; the floor for DeliverAt)
+	DeliverAt int64 // ns, arrival time at the current stage / when to forward (>= RecvAt)
 }
 
 // ActionKind is the disposition of a packet after the pipeline.

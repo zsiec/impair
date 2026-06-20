@@ -34,24 +34,35 @@ func SyntheticTrace(n int, interval int64) []Event {
 	return ev
 }
 
-// Run feeds the trace through eng and returns the action log as a stable string,
-// keyed by ingress order (deterministic regardless of delivery reordering). The
-// returned string is the golden-diff artifact.
-func Run(eng *engine.Engine, trace []Event) string {
-	var b strings.Builder
+// RunActions feeds the trace through eng and invokes fn(recvAt, action) for
+// every resulting Action, in ingress order. It is the shared primitive behind
+// Run, RunStats, and pattern recording (fn can be a *pattern.Recorder's Add).
+// Packet content is deterministic (byte(i+j)) so the whole run is reproducible.
+func RunActions(eng *engine.Engine, trace []Event, fn func(recvAt int64, a engine.Action)) {
 	for i, ev := range trace {
 		data := make([]byte, ev.Len)
 		for j := range data {
 			data[j] = byte(i + j)
 		}
 		for _, a := range eng.Handle(engine.Packet{Data: data, Dir: ev.Dir}, ev.At) {
-			if a.Kind == engine.Drop {
-				fmt.Fprintf(&b, "t=%d %s DROP seq=%d by=%s\n", ev.At, a.Dir, a.Seq, a.Reason)
-			} else {
-				fmt.Fprintf(&b, "t=%d %s FWD  seq=%d deliver=%d len=%d\n", ev.At, a.Dir, a.Seq, a.DeliverAt, len(a.Data))
-			}
+			fn(ev.At, a)
 		}
 	}
+}
+
+// Run feeds the trace through eng and returns the action log as a stable string,
+// keyed by ingress order (deterministic regardless of delivery reordering). The
+// canonical golden artifact uses the pattern package; this remains a quick
+// human-readable dump.
+func Run(eng *engine.Engine, trace []Event) string {
+	var b strings.Builder
+	RunActions(eng, trace, func(recvAt int64, a engine.Action) {
+		if a.Kind == engine.Drop {
+			fmt.Fprintf(&b, "t=%d %s DROP seq=%d by=%s\n", recvAt, a.Dir, a.Seq, a.Reason)
+		} else {
+			fmt.Fprintf(&b, "t=%d %s FWD  seq=%d deliver=%d len=%d\n", recvAt, a.Dir, a.Seq, a.DeliverAt, len(a.Data))
+		}
+	})
 	return b.String()
 }
 
@@ -65,28 +76,21 @@ type Stats struct {
 
 // RunStats is like Run but returns aggregate counters instead of the full log.
 func RunStats(eng *engine.Engine, trace []Event) Stats {
-	var s Stats
+	s := Stats{Ingress: len(trace)}
 	var lastDeliver [2]int64
 	var haveLast [2]bool
-	for i, ev := range trace {
-		s.Ingress++
-		data := make([]byte, ev.Len)
-		for j := range data {
-			data[j] = byte(i + j)
-		}
-		for _, a := range eng.Handle(engine.Packet{Data: data, Dir: ev.Dir}, ev.At) {
-			switch a.Kind {
-			case engine.Drop:
-				s.Dropped++
-			case engine.Forward:
-				s.Forwarded++
-				if haveLast[a.Dir] && a.DeliverAt < lastDeliver[a.Dir] {
-					s.Reordered++
-				}
-				lastDeliver[a.Dir] = a.DeliverAt
-				haveLast[a.Dir] = true
+	RunActions(eng, trace, func(recvAt int64, a engine.Action) {
+		switch a.Kind {
+		case engine.Drop:
+			s.Dropped++
+		case engine.Forward:
+			s.Forwarded++
+			if haveLast[a.Dir] && a.DeliverAt < lastDeliver[a.Dir] {
+				s.Reordered++
 			}
+			lastDeliver[a.Dir] = a.DeliverAt
+			haveLast[a.Dir] = true
 		}
-	}
+	})
 	return s
 }

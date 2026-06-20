@@ -265,3 +265,47 @@ func TestNilData(t *testing.T) {
 		}
 	}
 }
+
+// TestKeysOffDeliverAtUnderUpstreamDelay verifies the TIME-BASE CONVENTION: when
+// an upstream cell has delayed the packet (DeliverAt strictly > RecvAt), a
+// reordered packet is sent "now" = at its arrival time at this stage
+// (in.DeliverAt), NOT teleported back to in.RecvAt, while a non-reordered packet
+// is in.DeliverAt + Gap. ReorderPct=1 forces the reordered branch; ReorderPct=0
+// forces the non-reordered branch.
+func TestKeysOffDeliverAtUnderUpstreamDelay(t *testing.T) {
+	const recvAt = 1_000
+	const upstreamDelay = 7_000_000 // upstream cell pushed DeliverAt this far past RecvAt
+	const deliverAt = recvAt + upstreamDelay
+	const gap = 5_000_000
+
+	mk := func() engine.InFlight {
+		in := mkIn(1, recvAt)
+		in.DeliverAt = deliverAt // simulate upstream delay: DeliverAt > RecvAt
+		return in
+	}
+
+	// Reordered branch: DeliverAt must stay at in.DeliverAt, not snap to RecvAt.
+	cReorder := New(Config{ReorderPct: 1.0, Gap: gap}, src("comp-reorder"))
+	got := cReorder.Process(mk())
+	if len(got) != 1 {
+		t.Fatalf("reordered: want 1 output, got %d", len(got))
+	}
+	if got[0].DeliverAt != deliverAt {
+		t.Fatalf("reordered: DeliverAt = %d, want in.DeliverAt %d (must not key off RecvAt %d)",
+			got[0].DeliverAt, deliverAt, recvAt)
+	}
+	if got[0].DeliverAt == recvAt {
+		t.Fatal("reordered: DeliverAt teleported back to RecvAt")
+	}
+
+	// Non-reordered branch: DeliverAt == in.DeliverAt + Gap (already correct).
+	cKeep := New(Config{ReorderPct: 0.0, Gap: gap}, src("comp-keep"))
+	got2 := cKeep.Process(mk())
+	if len(got2) != 1 {
+		t.Fatalf("non-reordered: want 1 output, got %d", len(got2))
+	}
+	if got2[0].DeliverAt != deliverAt+gap {
+		t.Fatalf("non-reordered: DeliverAt = %d, want in.DeliverAt+Gap %d",
+			got2[0].DeliverAt, deliverAt+gap)
+	}
+}

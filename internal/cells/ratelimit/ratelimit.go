@@ -58,9 +58,13 @@ func (c *cell) Name() string { return "ratelimit" }
 // Process shapes one packet onto the virtual transmit clock.
 //
 //   - serialize := len(Data) * 1e9 / RateBps   (ns to clock the bytes out)
-//   - start     := max(RecvAt, queueFreeAt)    (when the link becomes free)
+//   - start     := max(DeliverAt, queueFreeAt)  (when the link becomes free)
 //   - DeliverAt := start + serialize
 //   - advance queueFreeAt = DeliverAt
+//
+// The packet reaches this rate limiter at in.DeliverAt — its arrival time at
+// this stage, already reflecting any upstream delay — not at in.RecvAt, so the
+// queue arrival time and backlog are computed relative to in.DeliverAt.
 //
 // Before committing, the backlog already queued ahead of this packet is
 // computed; if it exceeds QueueBytes the packet is dropped and the clock is not
@@ -71,10 +75,12 @@ func (c *cell) Process(in engine.InFlight) []engine.InFlight {
 		return []engine.InFlight{in}
 	}
 
-	// Backlog (bytes) still queued ahead of this arrival. If the link is idle
-	// (queueFreeAt <= RecvAt) the backlog is zero.
-	if c.cfg.QueueBytes > 0 && c.queueFreeAt > in.RecvAt {
-		backlog := (c.queueFreeAt - in.RecvAt) * c.cfg.RateBps / nsPerSec
+	// Backlog (bytes) still queued ahead of this arrival. The packet arrives at
+	// this stage at in.DeliverAt (reflecting upstream delay), so the backlog is
+	// measured from there. If the link is idle (queueFreeAt <= DeliverAt) the
+	// backlog is zero.
+	if c.cfg.QueueBytes > 0 && c.queueFreeAt > in.DeliverAt {
+		backlog := (c.queueFreeAt - in.DeliverAt) * c.cfg.RateBps / nsPerSec
 		if backlog > c.cfg.QueueBytes {
 			return nil // drop-tail; do not advance the clock
 		}
@@ -82,7 +88,7 @@ func (c *cell) Process(in engine.InFlight) []engine.InFlight {
 
 	serialize := int64(len(in.Data)) * nsPerSec / c.cfg.RateBps
 
-	start := in.RecvAt
+	start := in.DeliverAt
 	if c.queueFreeAt > start {
 		start = c.queueFreeAt
 	}

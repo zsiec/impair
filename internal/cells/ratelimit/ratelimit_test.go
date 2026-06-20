@@ -270,3 +270,69 @@ func TestNeverDeliverBeforeRecv(t *testing.T) {
 		recvAt += int64(i%4) * 1_000_000 // jittery, sometimes-bursty arrivals
 	}
 }
+
+// pktDelayed builds an InFlight that an upstream cell has delayed: DeliverAt is
+// strictly greater than RecvAt.
+func pktDelayed(seq uint64, recvAt, deliverAt int64, size int) engine.InFlight {
+	in := pkt(seq, recvAt, size)
+	in.DeliverAt = deliverAt
+	return in
+}
+
+// TestKeysOffDeliverAtUnderUpstreamDelay verifies the TIME-BASE CONVENTION: the
+// rate limiter keys off in.DeliverAt (arrival at this stage, reflecting upstream
+// delay), not in.RecvAt. On an idle link a single packet's DeliverAt must be
+// in.DeliverAt + serialize. Keying off RecvAt would (wrongly) start clocking the
+// packet at RecvAt and yield RecvAt + serialize.
+func TestKeysOffDeliverAtUnderUpstreamDelay(t *testing.T) {
+	rate := int64(1000) // 1 byte = 1_000_000 ns
+	c := New(Config{RateBps: rate}, newSrc())
+
+	const recvAt = 0
+	const deliverAt = 50_000_000 // upstream delay: arrives at this stage at t=50ms
+	const size = 10
+	serialize := int64(size) * nsPerSec / rate
+
+	out := c.Process(pktDelayed(1, recvAt, deliverAt, size))
+	if len(out) != 1 {
+		t.Fatalf("want 1 output, got %d", len(out))
+	}
+	wantDeliver := int64(deliverAt) + serialize
+	if out[0].DeliverAt != wantDeliver {
+		t.Fatalf("DeliverAt = %d, want in.DeliverAt+serialize %d (must not key off RecvAt: that would give %d)",
+			out[0].DeliverAt, wantDeliver, int64(recvAt)+serialize)
+	}
+	if out[0].DeliverAt < int64(deliverAt) {
+		t.Fatalf("DeliverAt %d < in.DeliverAt %d", out[0].DeliverAt, deliverAt)
+	}
+}
+
+// TestBacklogKeysOffDeliverAt verifies drop-tail backlog is measured from
+// in.DeliverAt, not in.RecvAt. We prime the link so it is busy until t=10ms, then
+// offer a second packet whose RecvAt is 0 (huge backlog if measured from RecvAt)
+// but whose DeliverAt is 12ms (link already idle => zero backlog). It must be
+// admitted because the backlog is computed from DeliverAt.
+func TestBacklogKeysOffDeliverAt(t *testing.T) {
+	rate := int64(1000) // 1 byte = 1ms
+	queue := int64(5)   // tiny buffer
+	c := New(Config{RateBps: rate, QueueBytes: queue}, newSrc()).(*cell)
+
+	// Prime: first packet admitted on idle link -> queueFreeAt = 10ms.
+	if out := c.Process(pkt(1, 0, 10)); len(out) != 1 {
+		t.Fatalf("first packet not admitted: %d outs", len(out))
+	}
+
+	// Second packet: RecvAt=0 (backlog from RecvAt would be 10 bytes > queue=5 ->
+	// would wrongly drop), but DeliverAt=12ms is past queueFreeAt so the true
+	// backlog at this stage is 0 -> must be admitted.
+	const deliverAt = 12 * nsPerSec / 1000 // 12_000_000 ns
+	out := c.Process(pktDelayed(2, 0, deliverAt, 10))
+	if len(out) != 1 {
+		t.Fatalf("backlog keyed off DeliverAt should admit (idle link at %d), got %d outs",
+			deliverAt, len(out))
+	}
+	serialize := int64(10) * nsPerSec / rate
+	if out[0].DeliverAt != int64(deliverAt)+serialize {
+		t.Fatalf("DeliverAt = %d, want %d", out[0].DeliverAt, int64(deliverAt)+serialize)
+	}
+}

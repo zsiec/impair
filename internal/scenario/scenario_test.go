@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/zsiec/impair/internal/pattern"
 	"github.com/zsiec/impair/internal/sim"
 )
 
@@ -37,15 +39,23 @@ func TestDeterministicAcrossRuns(t *testing.T) {
 }
 
 // Golden gate (make schedule-golden): the realized schedule of the
-// "lte-congested" profile must match a committed artifact byte-for-byte. Set
-// UPDATE_GOLDEN=1 to regenerate after an intentional change.
+// "lte-congested" profile, recorded via the pattern package, must match a
+// committed artifact byte-for-byte. Set UPDATE_GOLDEN=1 to regenerate after an
+// intentional change.
 func TestScheduleGolden(t *testing.T) {
 	sc := Examples()["lte-congested"]
 	eng, err := Build(sc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := sim.Run(eng, sim.SyntheticTrace(2000, 1_000_000))
+	rec := pattern.NewRecorder(sc.Seed)
+	sim.RunActions(eng, sim.SyntheticTrace(2000, 1_000_000), rec.Add)
+	got := rec.String()
+
+	// The recorded artifact must be valid, parseable pattern.
+	if _, err := pattern.Parse(strings.NewReader(got)); err != nil {
+		t.Fatalf("recorded pattern does not parse: %v", err)
+	}
 
 	path := filepath.Join("testdata", "golden_lte-congested.pattern")
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
@@ -63,7 +73,8 @@ func TestScheduleGolden(t *testing.T) {
 		t.Fatalf("read golden (run `UPDATE_GOLDEN=1 go test ./internal/scenario/`): %v", err)
 	}
 	if got != string(want) {
-		t.Fatalf("pattern drifted from golden %s — determinism regression or intentional change (set UPDATE_GOLDEN=1)", path)
+		diff, _ := pattern.Compare(got, string(want))
+		t.Fatalf("pattern drifted from golden %s (%+v) — determinism regression or intentional change (set UPDATE_GOLDEN=1)", path, diff)
 	}
 }
 

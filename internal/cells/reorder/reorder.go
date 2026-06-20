@@ -1,8 +1,9 @@
 // Package reorder implements a netem-style reorder + duplication impairment
 // Cell. It models Linux tc-netem's `reorder` (which works in conjunction with a
-// base delay): with probability ReorderPct a packet is sent "now"
-// (DeliverAt = RecvAt), jumping ahead of its delayed peers, while every other
-// packet has a fixed Gap added to its DeliverAt. An optional correlation makes
+// base delay): with probability ReorderPct a packet is sent "now" (its
+// DeliverAt is left unchanged at its arrival time at this stage), jumping ahead
+// of its delayed peers, while every other packet has a fixed Gap added to its
+// DeliverAt. An optional correlation makes
 // the reorder decision sticky across successive packets, like netem's
 // correlation parameter. Independently, with probability DupPct the packet is
 // emitted twice (an independent byte copy), modelling netem's `duplicate`.
@@ -21,8 +22,8 @@ import (
 // ReorderPct and DupPct default to 0, so every packet passes through unchanged.
 type Config struct {
 	// ReorderPct is the probability in [0,1] that a packet is reordered, i.e.
-	// delivered immediately (DeliverAt = RecvAt) while non-reordered packets are
-	// pushed back by Gap.
+	// delivered immediately (DeliverAt left at its arrival time at this stage)
+	// while non-reordered packets are pushed back by Gap.
 	ReorderPct float64
 	// Gap is the delay (ns) added to a packet that is NOT selected for
 	// reordering. In netem this is the base delay the reordered packet jumps
@@ -65,8 +66,9 @@ func (r *Reorder) Name() string { return "reorder" }
 // Process applies reorder then duplication semantics.
 //
 //   - Reorder: if the packet is selected for reordering its DeliverAt is left at
-//     in.RecvAt (sent "now"); otherwise Gap is added to its DeliverAt. This
-//     never moves DeliverAt before RecvAt.
+//     in.DeliverAt (sent "now" = its arrival time at this stage, reflecting any
+//     upstream delay); otherwise Gap is added to its DeliverAt. This never moves
+//     DeliverAt before RecvAt.
 //   - Duplicate: if selected, the result is two InFlight whose Data are
 //     independent copies, so the caller (and downstream) can mutate one without
 //     affecting the other.
