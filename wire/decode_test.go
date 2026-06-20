@@ -175,3 +175,71 @@ func TestDecodeControlTypeMasking(t *testing.T) {
 		t.Fatalf("ControlType = %#x, want %#x", p.ControlType, CtrlUser)
 	}
 }
+
+// TestDecodeKK exercises the KK (key-based encryption) field of a DATA packet's
+// word1: [PP:2][O:1][KK:2][R:1][message number:26], so KK occupies bits 28..27.
+func TestDecodeKK(t *testing.T) {
+	const seq = 0x00112233
+	cases := []struct {
+		name      string
+		word1     uint32
+		wantKK    uint8
+		encrypted bool
+	}{
+		{"clear", 0xE0000000, 0, false},               // PP=11 O=1 KK=00
+		{"even-key", 0xE0000000 | (1 << 27), 1, true}, // KK=01
+		{"odd-key", 0xE0000000 | (2 << 27), 2, true},  // KK=10
+		{"reserved", 0xE0000000 | (3 << 27), 3, true}, // KK=11 (treat nonzero as encrypted)
+		// KK bits must not be polluted by the adjacent R (bit 26) flag.
+		{"clear-with-retrans", 0xE0000000 | (1 << 26), 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, ok := Decode(be(seq, tc.word1, 0, 0))
+			if !ok {
+				t.Fatal("Decode failed")
+			}
+			if p.IsControl {
+				t.Fatal("IsControl = true, want false")
+			}
+			if p.KK != tc.wantKK {
+				t.Errorf("KK = %d, want %d", p.KK, tc.wantKK)
+			}
+			if p.Encrypted() != tc.encrypted {
+				t.Errorf("Encrypted() = %v, want %v", p.Encrypted(), tc.encrypted)
+			}
+		})
+	}
+}
+
+// TestControlNeverEncrypted: control packets carry no payload and must never be
+// flagged encrypted, even if the bits that would be KK in a DATA word1 are set.
+func TestControlNeverEncrypted(t *testing.T) {
+	// word1 here is irrelevant for control; set the KK-position bits anyway.
+	p, ok := Decode(be(ctrlWord0(CtrlACK), 0xFFFFFFFF, 0, 0))
+	if !ok {
+		t.Fatal("Decode failed")
+	}
+	if p.Encrypted() {
+		t.Error("control packet reported Encrypted() = true")
+	}
+}
+
+// TestLooksEncrypted is the runner's auto-label helper: a KK-set DATA packet is
+// encrypted; a clear DATA packet, a control packet, and an undecodable datagram
+// are not.
+func TestLooksEncrypted(t *testing.T) {
+	const seq = 0x00112233
+	if !LooksEncrypted(be(seq, 0xE0000000|(1<<27), 0, 0)) {
+		t.Error("KK-set DATA packet should LookEncrypted")
+	}
+	if LooksEncrypted(be(seq, 0xE0000000, 0, 0)) {
+		t.Error("clear DATA packet should not LookEncrypted")
+	}
+	if LooksEncrypted(be(ctrlWord0(CtrlACK), 0, 0, 0)) {
+		t.Error("control packet should not LookEncrypted")
+	}
+	if LooksEncrypted(make([]byte, 4)) {
+		t.Error("too-short datagram should not LookEncrypted")
+	}
+}

@@ -41,6 +41,12 @@ func New(cfg Config, src *rng.Source) engine.Cell {
 // never drops).
 func (c *cell) Name() string { return "corrupt" }
 
+// RequiresCleartext reports false: corruption flips a uniformly-chosen bit
+// without ever inspecting or selecting on payload contents. It mangles
+// ciphertext exactly as readily as cleartext, so it remains a valid (if
+// content-blind) impairment on an encrypted flow.
+func (c *cell) RequiresCleartext() bool { return false }
+
 // Process passes the packet through, corrupting one bit with probability pct.
 // An empty payload can hold no bit to flip, so it is forwarded unchanged even
 // when selected for corruption. The single returned element keeps the packet;

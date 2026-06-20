@@ -286,6 +286,7 @@ type nop struct{}
 
 func (nop) Name() string                                 { return "nop" }
 func (nop) Process(in engine.InFlight) []engine.InFlight { return []engine.InFlight{in} }
+func (nop) RequiresCleartext() bool                      { return false }
 
 type dropEven struct{}
 
@@ -296,3 +297,4 @@ func (dropEven) Process(in engine.InFlight) []engine.InFlight {
 	}
 	return []engine.InFlight{in}
 }
+func (dropEven) RequiresCleartext() bool { return false }

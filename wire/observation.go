@@ -24,9 +24,27 @@ type Pkt struct {
 	IsControl   bool
 	Seq         uint32   // data packet sequence number (data only)
 	Retrans     bool     // data retransmission flag (data only)
+	KK          uint8    // key-based encryption flag (data only): 0=clear, 1=even key, 2=odd key
 	ControlType uint16   // control packet type (control only)
 	AckSeq      uint32   // ACK: the acknowledged sequence number (control only)
 	NakSeqs     []uint32 // NAK: reported-lost sequence numbers, ranges expanded
+}
+
+// Encrypted reports whether this packet's payload is KM-encrypted. Only DATA
+// packets carry a payload; the KK field is nonzero (even or odd key) when SRT's
+// AES-CTR encryption is in use. Control packets are never payload-encrypted.
+func (p Pkt) Encrypted() bool { return !p.IsControl && p.KK != 0 }
+
+// LooksEncrypted is a best-effort, header-only detector the runner can use to
+// auto-label an SRT flow's media plane as opaque. It returns true if the
+// datagram is a well-formed DATA packet whose KK (key-based encryption) field is
+// nonzero. It is intentionally conservative: a datagram it cannot decode, or a
+// control packet, yields false (control packets are unencrypted and a single
+// undecodable datagram should not flip the whole flow's label). Callers
+// typically OR this over the first handful of DATA packets of a flow.
+func LooksEncrypted(data []byte) bool {
+	p, ok := Decode(data)
+	return ok && p.Encrypted()
 }
 
 // Observation accumulates the wire facts over one run, from one Observer.

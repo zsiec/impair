@@ -63,6 +63,12 @@ func New(cfg Config, src *rng.Source) engine.Cell {
 // Name implements engine.Cell.
 func (r *Reorder) Name() string { return "reorder" }
 
+// RequiresCleartext reports false: reorder/duplicate decisions come from the
+// rng substream and only shift DeliverAt or clone the packet — they never read
+// payload contents, so they impair an encrypted flow identically to a cleartext
+// one.
+func (r *Reorder) RequiresCleartext() bool { return false }
+
 // Process applies reorder then duplication semantics.
 //
 //   - Reorder: if the packet is selected for reordering its DeliverAt is left at

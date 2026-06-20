@@ -46,6 +46,42 @@ const (
 	fmtGenericNACK = 1 // RTPFB FMT for the RFC 4585 Generic NACK
 )
 
+// DTLS record-layer constants used by the best-effort encrypted-flow detector.
+// A DTLS record begins with a 1-byte content type, a 2-byte protocol version,
+// then a 2-byte epoch, 6-byte sequence number, 2-byte length, and the
+// (encrypted, for handshake-after-CCS and application data) fragment.
+const (
+	dtlsHandshake = 0x16 // ContentType handshake
+	dtlsAppData   = 0x17 // ContentType application_data (the encrypted media)
+	dtlsChangeCS  = 0x14 // ContentType change_cipher_spec
+	dtlsAlert     = 0x15 // ContentType alert
+
+	// DTLS major version is always 0xFE (1's-complement encoding of TLS major).
+	// Minor: 0xFF = DTLS 1.0, 0xFD = DTLS 1.2 (and the 1.3 record's legacy field).
+	dtlsVersionMajor = 0xFE
+)
+
+// LooksEncrypted is a best-effort, header-only detector the runner can use to
+// auto-label a RIST flow's media plane as opaque. RIST's "Main Profile" wraps
+// the RTP/RTCP in DTLS; a DTLS record starts with a content-type byte
+// (0x14/0x15/0x16/0x17) followed by a DTLS protocol version whose major byte is
+// 0xFE. We require BOTH the content-type and the version-major to match so a
+// cleartext RTP/RTCP datagram (whose byte 0 is 0x80-ish and byte 1 is a payload
+// type) is never misclassified. It is conservative by design: anything it
+// cannot positively identify as DTLS returns false.
+func LooksEncrypted(data []byte) bool {
+	if len(data) < 3 {
+		return false
+	}
+	switch data[0] {
+	case dtlsHandshake, dtlsAppData, dtlsChangeCS, dtlsAlert:
+	default:
+		return false
+	}
+	// data[1] is the DTLS version major (0xFE); data[2] is the minor.
+	return data[1] == dtlsVersionMajor
+}
+
 // Decode parses one RTP or RTCP datagram header. It returns the decoded Pkt and
 // true, or a zero Pkt and false if the datagram is too short to hold a header
 // (an RTCP packet needs >= 8 bytes; an RTP packet needs >= 12).

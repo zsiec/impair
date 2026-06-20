@@ -115,6 +115,11 @@ func New(cfg Config, src *rng.Source) engine.Cell {
 // Name implements engine.Cell.
 func (c *Cell) Name() string { return "delay" }
 
+// RequiresCleartext reports false: delay only shifts DeliverAt and never reads
+// payload contents, so it impairs an encrypted flow identically to a cleartext
+// one.
+func (c *Cell) RequiresCleartext() bool { return false }
+
 // Process advances in.DeliverAt by Base + jitter and returns the single packet.
 // It never drops or duplicates, and never sets DeliverAt below in.RecvAt.
 func (c *Cell) Process(in engine.InFlight) []engine.InFlight {

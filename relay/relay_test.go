@@ -115,6 +115,7 @@ func (d *dropFirst) Process(in engine.InFlight) []engine.InFlight {
 	}
 	return []engine.InFlight{in}
 }
+func (d *dropFirst) RequiresCleartext() bool { return false }
 
 // fixedDelay delays every packet by exactly d (ns) — a clean target for the
 // self-overhead probe: observed latency minus d is the relay's own overhead.
@@ -125,6 +126,7 @@ func (f *fixedDelay) Process(in engine.InFlight) []engine.InFlight {
 	in.DeliverAt = in.RecvAt + f.d
 	return []engine.InFlight{in}
 }
+func (f *fixedDelay) RequiresCleartext() bool { return false }
 
 // TestRelaySelfOverhead is the P0.f CI gate: the relay's own scheduling overhead
 // must be a small fraction of the injected delay. We inject a fixed 20 ms delay

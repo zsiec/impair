@@ -38,6 +38,11 @@ func New(cfg Config, src *rng.Source) engine.Cell {
 // Name implements engine.Cell.
 func (b *bernoulli) Name() string { return "loss.bernoulli" }
 
+// RequiresCleartext reports false: Bernoulli loss decides per packet from its
+// rng substream alone and never reads payload contents, so it impairs an
+// encrypted flow identically to a cleartext one.
+func (b *bernoulli) RequiresCleartext() bool { return false }
+
 // Process drops the packet with probability p, otherwise forwards it
 // unchanged.
 func (b *bernoulli) Process(in engine.InFlight) []engine.InFlight {
@@ -125,6 +130,11 @@ func NewGE(cfg GEConfig, src *rng.Source) engine.Cell {
 
 // Name implements engine.Cell.
 func (g *ge) Name() string { return "loss.ge" }
+
+// RequiresCleartext reports false: the Gilbert-Elliott chain advances from its
+// rng substream alone and never reads payload contents, so it impairs an
+// encrypted flow identically to a cleartext one.
+func (g *ge) RequiresCleartext() bool { return false }
 
 // Process advances the Gilbert-Elliott chain by one step and drops the
 // packet according to the current state's loss probability, then

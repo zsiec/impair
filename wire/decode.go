@@ -41,6 +41,12 @@ const headerLen = 16
 // retransMask isolates the R (retransmit) bit in a DATA packet's word1.
 const retransMask = 1 << 26
 
+// kkMask isolates the KK (key-based encryption) field in a DATA packet's word1.
+// word1 is [PP:2][O:1][KK:2][R:1][message number:26], so the two KK bits sit at
+// positions 28..27. KK == 0 means the payload is cleartext; KK == 1 (even key)
+// or KK == 2 (odd key) means it is KM-encrypted. (KK == 3 is reserved.)
+const kkMask = 0b11 << 27
+
 // Decode parses one SRT datagram's header. It returns the decoded Pkt and true,
 // or a zero Pkt and false if the datagram is too short to contain a header.
 func Decode(data []byte) (Pkt, bool) {
@@ -57,6 +63,7 @@ func Decode(data []byte) (Pkt, bool) {
 			IsControl: false,
 			Seq:       word0 & 0x7FFFFFFF,
 			Retrans:   word1&retransMask != 0,
+			KK:        uint8((word1 & kkMask) >> 27),
 		}
 		return p, true
 	}

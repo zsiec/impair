@@ -30,6 +30,18 @@ type Scenario struct {
 	Pipeline []Stage `json:"pipeline,omitempty"`
 	C2S      []Stage `json:"c2s,omitempty"`
 	S2C      []Stage `json:"s2c,omitempty"`
+
+	// Encrypted is a profile-author assertion that this flow's media plane is
+	// opaque to the relay (SRT with KM-encrypted payloads, RIST over DTLS/PSK,
+	// or QUIC/MoQ). It changes nothing about how payload-agnostic cells (loss,
+	// delay, reorder, ratelimit, droplist, corrupt) behave — those still run and
+	// impair the ciphertext exactly as they would cleartext. Its only effect is
+	// the Build guard: any cell whose RequiresCleartext() is true (a future
+	// protocol-aware / payload-selective cell) is refused at load time on an
+	// Encrypted flow, since it could only no-op on bytes it cannot read. The
+	// runner may also set this automatically from the on-wire detection helpers
+	// (wire.LooksEncrypted, ristwire.LooksEncrypted, etc.).
+	Encrypted bool `json:"encrypted,omitempty"`
 }
 
 // Stage is one position in a pipeline. Exactly one field must be non-nil; that
@@ -135,7 +147,29 @@ func build(s Scenario, keyPrefix string) (*engine.Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("s2c: %w", err)
 	}
+	if s.Encrypted {
+		if err := guardEncrypted("c2s", c2s); err != nil {
+			return nil, err
+		}
+		if err := guardEncrypted("s2c", s2c); err != nil {
+			return nil, err
+		}
+	}
 	return engine.New(c2s, s2c), nil
+}
+
+// guardEncrypted rejects any payload-selective cell wired onto a flow the author
+// marked Encrypted. Payload-agnostic cells (RequiresCleartext() == false) build
+// fine — they impair ciphertext just as well as cleartext. The error names the
+// offending cell so a profile author can swap it for a payload-agnostic
+// impairment or supply a test key and clear Encrypted.
+func guardEncrypted(dir string, cells []engine.Cell) error {
+	for _, c := range cells {
+		if c.RequiresCleartext() {
+			return fmt.Errorf("%s: cell %q requires cleartext but the flow is marked encrypted; use payload-agnostic impairment or supply a test key", dir, c.Name())
+		}
+	}
+	return nil
 }
 
 func buildPipeline(root *rng.Root, keyPrefix, dir string, stages []Stage) ([]engine.Cell, error) {

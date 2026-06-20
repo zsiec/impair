@@ -60,6 +60,11 @@ func NewDropList(cfg DropListConfig, src *rng.Source) engine.Cell {
 
 func (d *dropList) Name() string { return "droplist" }
 
+// RequiresCleartext reports false: DropList selects on the engine-assigned
+// ingress Seq (packet position), not on payload contents, so it impairs an
+// encrypted flow identically to a cleartext one.
+func (d *dropList) RequiresCleartext() bool { return false }
+
 func (d *dropList) Process(in engine.InFlight) []engine.InFlight {
 	if _, ok := d.drop[in.Seq]; ok {
 		return nil // drop
@@ -146,6 +151,11 @@ func NewDeliveryTrace(cfg DeliveryTraceConfig, src *rng.Source) engine.Cell {
 }
 
 func (t *deliveryTrace) Name() string { return "deliverytrace" }
+
+// RequiresCleartext reports false: DeliveryTrace paces packets onto a schedule
+// from their sizes and arrival times alone and never reads payload contents, so
+// it impairs an encrypted flow identically to a cleartext one.
+func (t *deliveryTrace) RequiresCleartext() bool { return false }
 
 // oppTimeMs returns the trace-relative time (ms) of opportunity index i, and
 // whether that opportunity exists. Non-looping traces have only len(sched)

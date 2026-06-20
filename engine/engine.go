@@ -87,6 +87,24 @@ type Action struct {
 type Cell interface {
 	Name() string
 	Process(in InFlight) []InFlight
+
+	// RequiresCleartext reports whether this cell inspects or selects on the
+	// packet's payload CONTENTS (as opposed to its size, arrival timing, or
+	// ingress Seq). A cell that returns true cannot do anything meaningful on a
+	// flow whose media plane is encrypted (SRT-KM, RIST-DTLS, QUIC/MoQ), so
+	// scenario.Build refuses to wire it onto a flow marked Encrypted.
+	//
+	// Payload-AGNOSTIC cells return false: loss, delay, reorder, ratelimit,
+	// droplist, deliverytrace — none look at payload bytes, so they impair an
+	// encrypted flow exactly as well as a cleartext one. Corruption also returns
+	// false: it flips bytes blindly and corrupts ciphertext just fine (the result
+	// is still a valid impairment, just not a content-targeted one).
+	//
+	// Any future protocol-aware / payload-selective cell (e.g. "drop only MoQ
+	// keyframe objects" or "drop RIST media but not handshake") MUST return true
+	// so the encrypted-flow guard catches it at load time rather than silently
+	// no-op'ing on opaque bytes.
+	RequiresCleartext() bool
 }
 
 // Engine runs one ordered Cell pipeline per direction.

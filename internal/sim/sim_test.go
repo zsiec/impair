@@ -14,6 +14,7 @@ func (nopCell) Name() string { return "nop" }
 func (nopCell) Process(in engine.InFlight) []engine.InFlight {
 	return []engine.InFlight{in}
 }
+func (nopCell) RequiresCleartext() bool { return false }
 
 // dropEvenCell drops packets with an even ingress seq — a trivial deterministic
 // impairment to confirm drops are recorded and reproducible.
@@ -26,6 +27,7 @@ func (dropEvenCell) Process(in engine.InFlight) []engine.InFlight {
 	}
 	return []engine.InFlight{in}
 }
+func (dropEvenCell) RequiresCleartext() bool { return false }
 
 func newEngine() *engine.Engine {
 	return engine.New(

@@ -55,6 +55,11 @@ func New(cfg Config, src *rng.Source) engine.Cell {
 
 func (c *cell) Name() string { return "ratelimit" }
 
+// RequiresCleartext reports false: shaping is a function of packet sizes and
+// arrival times only and never reads payload contents, so it impairs an
+// encrypted flow identically to a cleartext one.
+func (c *cell) RequiresCleartext() bool { return false }
+
 // Process shapes one packet onto the virtual transmit clock.
 //
 //   - serialize := len(Data) * 1e9 / RateBps   (ns to clock the bytes out)
