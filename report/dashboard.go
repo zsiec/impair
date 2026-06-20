@@ -139,6 +139,9 @@ const dashboardSource = `<!DOCTYPE html>
   td.cnum .bar i { position:absolute; left:0; top:0; bottom:0; background:var(--c); box-shadow:0 0 8px var(--c); }
   td.cnum .sc { font-size:.52rem; color:var(--faint); letter-spacing:.08em; margin-top:.3rem; }
   td.cnum.na { color:var(--faint); } td.cnum.na .pct { color:var(--faint); font-size:.7rem; font-weight:400; text-shadow:none; }
+  td.cnum.sel-able { cursor:pointer; transition:background .12s, box-shadow .12s; }
+  td.cnum.sel-able:hover { background:rgba(255,255,255,.03); }
+  td.cnum.sel { box-shadow:inset 0 0 0 1px var(--c), inset 0 0 16px -6px var(--c); background:rgba(255,255,255,.02); }
   .cmp-foot { padding:.65rem 1.1rem; color:var(--faint); font-size:.62rem; line-height:1.6; letter-spacing:.04em; }
   .cmp-foot .sch { color:var(--amber); } .cmp-foot .bid { color:var(--phos-dim); }
 
@@ -197,6 +200,16 @@ const dashboardSource = `<!DOCTYPE html>
   .check .cname { font-size:.72rem; color:var(--ink2); letter-spacing:.02em; }
   .check .cverd { font-size:.56rem; letter-spacing:.12em; color:var(--c); }
   .check .cdet { grid-column:2; font-size:.7rem; color:var(--muted); line-height:1.55; margin-top:.15rem; }
+  /* QoE band (delivered-% CI + A/V skew) in the readout */
+  .qoe { margin-top:.7rem; padding:.5rem .6rem; border:1px solid var(--line); background:rgba(0,0,0,.18); }
+  .qoe .qh { font-size:.56rem; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin-bottom:.4rem; }
+  .qbar { position:relative; height:8px; background:var(--panel2); border:1px solid var(--line); }
+  .qbar .qci { position:absolute; top:0; bottom:0; background:var(--phos-dim); opacity:.7; }
+  .qbar .qmean { position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--ink2); box-shadow:0 0 8px var(--ink2); }
+  .qsc { display:flex; justify-content:space-between; font-size:.56rem; color:var(--muted); margin-top:.25rem; font-variant-numeric:tabular-nums; }
+  .qskew { font-size:.78rem; color:var(--c,var(--ink2)); font-variant-numeric:tabular-nums; }
+  .qskew .qval { font-weight:700; font-size:.9rem; }
+  .qoe.c-pass{ --c:var(--phos); } .qoe.c-warn{ --c:var(--amber); border-color:#5a4520; } .qoe.c-fail{ --c:var(--red); border-color:#5a2326; }
   .metrics { margin-top:.9rem; border-top:1px dashed var(--line); padding-top:.7rem; }
   .metrics .mh { font-size:.58rem; letter-spacing:.2em; color:var(--faint); text-transform:uppercase; margin-bottom:.4rem; }
   .metrics .m { display:flex; justify-content:space-between; gap:1rem; font-size:.72rem; padding:.12rem 0; }
@@ -311,7 +324,7 @@ const dashboardSource = `<!DOCTYPE html>
   function bucketScn(m,b){ for(var i=0;i<m.scenarios.length;i++){ if(b.match(m.scenarios[i])) return m.scenarios[i]; } return null; }
   function buildCompare(){
     var rows=[];
-    DATA.sections.forEach(function(s){
+    DATA.sections.forEach(function(s,si){
       var m=s.matrix;
       if(m.scenarios.indexOf("clean")<0) return;                 // not a loss-gradient matrix
       if(!BUCKETS.slice(1).some(function(b){return bucketScn(m,b);})) return;
@@ -326,7 +339,7 @@ const dashboardSource = `<!DOCTYPE html>
           var res=cellFor(m,lib,scn); if(!res) return null;
           return {pct:deliv(res), verdict:rollup(res), scn:scn};
         });
-        rows.push({proto:proto, lib:lib, tier:t1?"T1":"T2", downlink:downlink, cells:cells});
+        rows.push({si:si, proto:proto, lib:lib, tier:t1?"T1":"T2", downlink:downlink, cells:cells});
       });
     });
     var host=document.getElementById("compare");
@@ -351,9 +364,10 @@ const dashboardSource = `<!DOCTYPE html>
       r.cells.forEach(function(c){
         if(!c){ h+='<td class="cnum na"><span class="pct">—</span></td>'; return; }
         var v=V[c.verdict];
-        if(c.pct==null){ h+='<td class="cnum na '+v.cls+'"><span class="pct">wire</span><div class="sc">'+escapeHtml(c.scn)+'</div></td>'; return; }
+        var dattr=' data-si="'+r.si+'" data-lib="'+escapeHtml(r.lib)+'" data-scn="'+escapeHtml(c.scn)+'"';
+        if(c.pct==null){ h+='<td class="cnum na sel-able '+v.cls+'"'+dattr+'><span class="pct">wire</span><div class="sc">'+escapeHtml(c.scn)+'</div></td>'; return; }
         var p=Math.max(0,Math.min(100,c.pct));
-        h+='<td class="cnum '+v.cls+'"><span class="pct">'+fmt(Math.round(c.pct*10)/10)+'<small style="font-size:.6rem;opacity:.6">%</small></span>'+
+        h+='<td class="cnum sel-able '+v.cls+'"'+dattr+'><span class="pct">'+fmt(Math.round(c.pct*10)/10)+'<small style="font-size:.6rem;opacity:.6">%</small></span>'+
            '<div class="bar"><i style="width:'+p+'%"></i></div><div class="sc">'+escapeHtml(c.scn)+'</div></td>';
       });
       h+='</tr>';
@@ -362,6 +376,13 @@ const dashboardSource = `<!DOCTYPE html>
     h+='<div class="cmp-foot">Specialized capability matrices (bonding, FEC, Tier-1 GE) are not loss-gradient comparisons and are shown only as their own sections below. '+
        '<span class="bid">bi</span> = bidirectional schedule · <span class="sch">S2C</span> = downlink-only · <b>wire</b> = graded from the wire with no self-reported delivery %.</div>';
     host.innerHTML=h;
+    // Click a comparison cell to inspect the underlying run in the readout pane.
+    host.addEventListener("click",function(ev){
+      var td=ev.target.closest("td.sel-able"); if(!td)return;
+      var m=DATA.sections[+td.dataset.si].matrix;
+      var res=cellFor(m,td.dataset.lib,td.dataset.scn);
+      if(res) showReadout(td.dataset.lib,td.dataset.scn,res,td);
+    });
   }
   buildCompare();
 
@@ -369,13 +390,41 @@ const dashboardSource = `<!DOCTYPE html>
   var ro=document.getElementById("readout");
   var selected=null;
   function fmt(n){ if(n===Math.round(n)) return String(n); return (Math.round(n*1000)/1000).toString(); }
+  // qoeBand renders a delivered-% bootstrap-CI band [Lo, mean, Hi] when present
+  // (MoQ deliveredPct* / SRT-RIST deliveryPct*), plus an A/V-skew sync strip for
+  // the MoQ rows — the glass-to-glass QoE the matrix grades, made legible.
+  function qoeBand(m){
+    var mean=m.deliveredPctMean!=null?m.deliveredPctMean:m.deliveryPctMean;
+    var lo  =m.deliveredPctLo  !=null?m.deliveredPctLo  :m.deliveryPctLo;
+    var hi  =m.deliveredPctHi  !=null?m.deliveredPctHi  :m.deliveryPctHi;
+    var pt  =m.deliveredPct    !=null?m.deliveredPct    :m.deliveryPct;
+    var h="";
+    if(lo!=null&&hi!=null){
+      var clamp=function(x){return Math.max(0,Math.min(100,x));};
+      var l=clamp(lo),hh=clamp(hi),mn=clamp(mean!=null?mean:pt);
+      h+='<div class="qoe"><div class="qh">delivered % · bootstrap CI'+(m.reps?' ('+fmt(m.reps)+' reps)':'')+'</div>'+
+         '<div class="qbar"><span class="qci" style="left:'+l+'%;width:'+Math.max(1,hh-l)+'%"></span>'+
+         '<span class="qmean" style="left:'+mn+'%"></span></div>'+
+         '<div class="qsc"><span>'+fmt(Math.round(l))+'%</span><span>'+fmt(Math.round(mn))+'% mean</span><span>'+fmt(Math.round(hh))+'%</span></div></div>';
+    } else if(pt!=null){
+      var pc=Math.max(0,Math.min(100,pt));
+      h+='<div class="qoe"><div class="qh">delivered %</div><div class="qbar"><span class="qci" style="left:0;width:'+pc+'%;opacity:.5"></span><span class="qmean" style="left:'+pc+'%"></span></div></div>';
+    }
+    if(typeof m.avSkewMs==="number"){
+      var sk=Math.abs(m.avSkewMs), cls=sk<=400?"c-pass":sk<=1500?"c-warn":"c-fail";
+      h+='<div class="qoe '+cls+'"><div class="qh">A/V sync skew</div><div class="qskew"><span class="qval">'+fmt(Math.round(m.avSkewMs))+' ms</span> · '+
+         (sk<=400?"in sync":sk<=1500?"drifting":"DESYNCED — picture vs sound")+'</div></div>';
+    }
+    return h;
+  }
   function showReadout(lib,scn,res,td){
     if(selected) selected.classList.remove("sel");
-    selected = td.querySelector(".v"); selected.classList.add("sel");
+    selected = (td&&td.querySelector(".v")) || td; if(selected) selected.classList.add("sel");
     var rv=rollup(res), v=V[rv];
     var h='<div class="ro-head"><span class="t">Readout</span><span class="v-pill '+v.cls+'">'+v.k+'</span></div><div class="ro-body">';
     h+='<div class="ro-coord"><span class="lib">'+lib+'</span><span class="x">▸</span><span class="scn">'+scn+'</span></div>';
     h+='<div class="ro-sub">'+(res.checks?res.checks.length:0)+' invariant'+((res.checks&&res.checks.length===1)?"":"s")+' · rollup = '+v.k+'</div>';
+    h+=qoeBand(res.metrics||{});
     (res.checks||[]).forEach(function(c){
       var cv=V[c.verdict];
       h+='<div class="check '+cv.cls+'"><span class="cv"></span><div><span class="cname">'+c.name+'</span> <span class="cverd">'+(cv.ab||cv.k)+'</span>'+
