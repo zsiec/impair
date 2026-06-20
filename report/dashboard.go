@@ -467,7 +467,9 @@ const dashboardSource = `<!DOCTYPE html>
     }
     if(typeof m.avSkewMs==="number"){
       var sk=Math.abs(m.avSkewMs), cls=sk<=400?"c-pass":sk<=1500?"c-warn":"c-fail";
-      h+='<div class="qoe '+cls+'"><div class="qh">A/V sync skew</div><div class="qskew"><span class="qval">'+fmt(Math.round(m.avSkewMs))+' ms</span> · '+
+      // large skews read as seconds (a 104728 ms desync is "104.7 s", not a wall of ms)
+      var sg=m.avSkewMs<0?"-":"+", val=sk>=1000?sg+fmt(Math.round(sk/100)/10)+" s":sg+fmt(Math.round(sk))+" ms";
+      h+='<div class="qoe '+cls+'"><div class="qh">A/V sync skew</div><div class="qskew"><span class="qval">'+val+'</span> · '+
          (sk<=400?"in sync":sk<=1500?"drifting":"DESYNCED — picture vs sound")+'</div></div>';
     }
     return h;
