@@ -34,12 +34,12 @@ Protocol-aware *selective drop* only works on **cleartext / test-key** payloads.
   Protocol-aware *impairment* remains a real feature — in a **test-key mode** (harness holds the keys) and via **q-log side channels** — just not the headline for encrypted production traffic.
 
 ### 3. Scope reality: you have SRT+RIST (Go+Rust). You do **not** have a MoQ stack.
-The design assumed reusable MoQ Sans-I/O parsers — they don't exist. So **MoQ is build/integrate-from-scratch** (a large QUIC + WebTransport + MoQT surface). Sequence accordingly: lead with **SRT** (your strongest, with the existing `srt-bench` seed), then **RIST**, and treat **MoQ as a later, partner-dependent or QUIC-library-leveraged phase** — not P0–P2.
+The design assumed reusable MoQ Sans-I/O parsers — they don't exist. So **MoQ is build/integrate-from-scratch** (a large QUIC + WebTransport + MoQT surface). Sequence accordingly: lead with **SRT** (your strongest, with the existing `txbench` seed), then **RIST**, and treat **MoQ as a later, partner-dependent or QUIC-library-leveraged phase** — not P0–P2.
 
 ### 4. Neutrality: your own stacks can't be the "golden" arbiter unprovenanced
 Using `srtgo`/your Rust stacks to judge libsrt is circular unless they're independently conformance-validated. Frame the oracle as **wire-ground-truth + spec-derived assertions**; the Sans-I/O differential is a *cross-check that flags divergence for investigation*, never the verdict. (This protects the neutrality that is the whole governance moat.)
 
-> Also note: `~/dev/impair/` is currently **docs only**. The "core IP" today is a ~156-line prototype `relay.go` in `srt-bench` with two known determinism bugs (wall-clock `time.AfterFunc`; unseeded PRNG). P0 is real engineering, not a 4-6 week "evolution."
+> Also note: `~/dev/impair/` is currently **docs only**. The "core IP" today is a ~156-line prototype `relay.go` in `txbench` with two known determinism bugs (wall-clock `time.AfterFunc`; unseeded PRNG). P0 is real engineering, not a 4-6 week "evolution."
 
 ---
 
@@ -51,7 +51,7 @@ Using `srtgo`/your Rust stacks to judge libsrt is circular unless they're indepe
                     │  register-by-PR manifests: implementations_{srt,rist,moq}.json        │
                     └──────────────────────────────▲──────────────────────────────────────┘
                                                     │ results + artifacts (pcap/qlog/QoE trace)
-   ┌──────────── Orchestrator (Go, from srt-bench) ─┴─────────────────────────────────────┐
+   ┌──────────── Orchestrator (Go, from txbench) ─┴─────────────────────────────────────┐
    │  resolve scenario (CUE) → schedule SUT pair/triple → pick tier → run reps → oracle    │
    └───┬───────────────────────────────────┬──────────────────────────────────────────────┘
        │ Tier-1 (white-box, BIT-DETERMINISTIC)│ Tier-2 (black-box, dist-reproducible)
@@ -74,7 +74,7 @@ Using `srtgo`/your Rust stacks to judge libsrt is circular unless they're indepe
 - **Profiles**: seedable realistic profiles (G.1050/TIA-921 via spandsp) + curated named profiles (LTE-congested, GEO/LEO, Wi-Fi-roam) with **license-cleared, checksum-pinned traces** (note: MAWI/CRAWDAD are retired — sourcing is an open task).
 - **Oracle**: three vantage points (sender self-describing payload, wire ledger, receiver) + spec-derived per-protocol assertions; a *per-delivery-unit* model that actually maps to SRT streams **and** RIST RTP/SSRC packets **and** MoQ objects/subgroups (the "one payload/one oracle" premise needs per-protocol specialization).
 - **Wire observer**: Sans-I/O decoders for SRT control, RIST RTCP/NACK + 2022-1/-7 FEC, MoQ objects (test-key mode for encrypted).
-- **SUT contract**: Tier-1 in-process `transport` interface (promote `srt-bench`); Tier-2 QIR-style Docker entrypoint (ROLE/SCENARIO/exit-127).
+- **SUT contract**: Tier-1 in-process `transport` interface (promote `txbench`); Tier-2 QIR-style Docker entrypoint (ROLE/SCENARIO/exit-127).
 - **Scenario schema**: one CUE source → Go structs + result JSON-Schema + matrix; declarative, diffable, seed+repeat baked in.
 - **Results + matrix**: static-site model; versioned upload schema up front; clickable pcap/qlog/QoE artifacts; cross-protocol Measurement views.
 - **Methodology spec**: a published "RFC-6349-for-low-latency-media" with a mandated results schema; align vocabulary with `draft-evens-moq-bench`.
@@ -83,4 +83,4 @@ Using `srtgo`/your Rust stacks to judge libsrt is circular unless they're indepe
 
 ## Recommended starting move
 
-**Build the SRT-only Tier-1 slice end-to-end first** (P0+P1): harden the relay into a virtual-clock, seeded, GE-burst-loss engine; add the SRT wire observer; ship a 3-stack static matrix with PASS/FAIL/WARN + clickable artifacts. That single vertical proves the whole thesis (deterministic + protocol-aware + oracle-graded), is genuinely achievable solo, reuses `srt-bench`, and de-risks everything downstream — *before* taking on RIST, MoQ, foreign-binary CI, or governance.
+**Build the SRT-only Tier-1 slice end-to-end first** (P0+P1): harden the relay into a virtual-clock, seeded, GE-burst-loss engine; add the SRT wire observer; ship a 3-stack static matrix with PASS/FAIL/WARN + clickable artifacts. That single vertical proves the whole thesis (deterministic + protocol-aware + oracle-graded), is genuinely achievable solo, reuses `txbench`, and de-risks everything downstream — *before* taking on RIST, MoQ, foreign-binary CI, or governance.
