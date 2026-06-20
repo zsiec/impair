@@ -112,6 +112,36 @@ const dashboardSource = `<!DOCTYPE html>
   .legend .sw { width:11px; height:11px; border-radius:2px; box-shadow:0 0 8px var(--c); background:var(--c); }
   .legend .note { margin-left:auto; color:var(--faint); font-style:italic; letter-spacing:.04em; text-transform:none; }
 
+  /* ── cross-protocol resilience comparison ──────────────── */
+  .compare { border:1px solid var(--line); background:linear-gradient(180deg,rgba(54,207,224,.04),transparent); margin:1.4rem 0 .2rem; }
+  .compare .cmp-head { display:flex; align-items:baseline; gap:.8rem; flex-wrap:wrap; padding:.95rem 1.1rem .7rem; border-bottom:1px solid var(--line);
+                       background:repeating-linear-gradient(135deg, rgba(94,123,214,.04) 0 8px, transparent 8px 16px); }
+  .compare .cmp-head h2 { margin:0; font-size:1.02rem; font-weight:700; letter-spacing:.04em; color:var(--ink2); }
+  .compare .cmp-head .seq { font-size:.62rem; color:var(--faint); letter-spacing:.2em; }
+  .compare .cmp-head .sub { font-size:.62rem; color:var(--muted); letter-spacing:.1em; text-transform:uppercase; margin-left:auto; }
+  .cmp-caveat { padding:.7rem 1.1rem; color:var(--muted); font-size:.7rem; line-height:1.6; border-bottom:1px solid var(--line); }
+  .cmp-caveat b { color:var(--cyan); font-weight:700; }
+  .cmp-scroll { overflow-x:auto; }
+  table.cmp { border-collapse:separate; border-spacing:0; width:100%; }
+  table.cmp th, table.cmp td { border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
+  table.cmp thead th { background:var(--panel); color:var(--muted); font-weight:600; font-size:.62rem; letter-spacing:.12em;
+                       text-transform:uppercase; padding:.55rem .7rem; text-align:center; white-space:nowrap; }
+  table.cmp thead th.lcol { text-align:left; }
+  table.cmp thead th .axh { color:var(--faint); font-size:.54rem; display:block; letter-spacing:.1em; margin-top:.15rem; }
+  table.cmp tbody th { background:var(--panel); text-align:left; padding:.5rem .9rem; white-space:nowrap; font-weight:600; font-size:.76rem; }
+  table.cmp tbody th .proto { color:var(--c,var(--cyan)); font-size:.56rem; letter-spacing:.2em; text-transform:uppercase; display:block; }
+  table.cmp tbody th .lib { color:var(--ink2); }
+  table.cmp tbody th .meta { color:var(--faint); font-size:.58rem; letter-spacing:.06em; margin-left:.5em; }
+  table.cmp tbody tr.grp-top th, table.cmp tbody tr.grp-top td { border-top:2px solid var(--faint); }
+  td.cnum { text-align:center; position:relative; padding:.5rem .6rem; min-width:92px; }
+  td.cnum .pct { font-size:1.15rem; font-weight:700; font-variant-numeric:tabular-nums; color:var(--c); text-shadow:0 0 12px var(--cg,transparent); line-height:1; }
+  td.cnum .bar { height:3px; margin-top:.4rem; background:var(--faint); position:relative; overflow:hidden; }
+  td.cnum .bar i { position:absolute; left:0; top:0; bottom:0; background:var(--c); box-shadow:0 0 8px var(--c); }
+  td.cnum .sc { font-size:.52rem; color:var(--faint); letter-spacing:.08em; margin-top:.3rem; }
+  td.cnum.na { color:var(--faint); } td.cnum.na .pct { color:var(--faint); font-size:.7rem; font-weight:400; text-shadow:none; }
+  .cmp-foot { padding:.65rem 1.1rem; color:var(--faint); font-size:.62rem; line-height:1.6; letter-spacing:.04em; }
+  .cmp-foot .sch { color:var(--amber); } .cmp-foot .bid { color:var(--phos-dim); }
+
   /* ── deck: grids + readout ──────────────────────────────── */
   .deck { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:1.6rem; align-items:start; margin-top:1.2rem; }
   @media (max-width:960px){ .deck{ grid-template-columns:1fr; } }
@@ -199,6 +229,8 @@ const dashboardSource = `<!DOCTYPE html>
   <div class="status" id="status"></div>
   <div class="legend" id="legend"></div>
 
+  <section class="compare" id="compare"></section>
+
   <div class="deck">
     <main id="sections"></main>
     <aside>
@@ -258,6 +290,80 @@ const dashboardSource = `<!DOCTYPE html>
     var c=el("span","chip "+v.cls); c.innerHTML='<span class="sw"></span>'+v.k; leg.appendChild(c);
   });
   leg.appendChild(el("span","note","cell colour = worst-of-checks · WARN is honest, not a failure"));
+
+  // ── cross-protocol resilience comparison ──
+  // Merges every loss-gradient capability matrix (SRT, RIST, MoQ ...) into ONE
+  // normalized view: each cell is delivered-% vs that implementation's OWN clean
+  // baseline (RFC-6349-style protocol-relative normalization), placed on a shared
+  // CLEAN / STEADY-LOSS / BURST severity axis. Absolute throughput is never
+  // compared across protocols — only the shape of each impl's resilience curve.
+  function deliv(res){
+    var m=res.metrics||{};
+    if(typeof m.deliveredPct==="number") return m.deliveredPct; // MoQ: vs own baseline
+    if(typeof m.deliveryPct==="number")  return m.deliveryPct;  // SRT/RIST: delivered/sent
+    return null;
+  }
+  var BUCKETS=[
+    {k:"CLEAN", axh:"baseline",    match:function(s){return s==="clean";}},
+    {k:"STEADY LOSS", axh:"~1% / congestion", match:function(s){return s==="lte-congested"||s==="downlink-1pct";}},
+    {k:"BURST", axh:"bursty / GE", match:function(s){return s==="lossy-burst"||s==="downlink-burst";}}
+  ];
+  function bucketScn(m,b){ for(var i=0;i<m.scenarios.length;i++){ if(b.match(m.scenarios[i])) return m.scenarios[i]; } return null; }
+  function buildCompare(){
+    var rows=[];
+    DATA.sections.forEach(function(s){
+      var m=s.matrix;
+      if(m.scenarios.indexOf("clean")<0) return;                 // not a loss-gradient matrix
+      if(!BUCKETS.slice(1).some(function(b){return bucketScn(m,b);})) return;
+      var proto=(s.title.split(/[ —·\/]/)[0]||s.title); // first token: SRT / RIST / MoQ
+      var downlink=m.scenarios.some(function(x){return /^downlink/.test(x);});
+      var t1=/tier-1/i.test(s.tier);
+      m.libs.forEach(function(lib){
+        if(/broken/.test(lib)) return;                            // negative-control pseudo-impl
+        var clean=cellFor(m,lib,"clean"); if(!clean) return;
+        var cells=BUCKETS.map(function(b){
+          var scn=bucketScn(m,b); if(!scn) return null;
+          var res=cellFor(m,lib,scn); if(!res) return null;
+          return {pct:deliv(res), verdict:rollup(res), scn:scn};
+        });
+        rows.push({proto:proto, lib:lib, tier:t1?"T1":"T2", downlink:downlink, cells:cells});
+      });
+    });
+    var host=document.getElementById("compare");
+    if(!rows.length){ host.style.display="none"; return; }
+    var nProto={}; rows.forEach(function(r){nProto[r.proto]=1;});
+    var h='<div class="cmp-head"><span class="seq">∑</span><h2>Cross-Protocol Resilience</h2>'+
+          '<span class="sub">'+rows.length+' impls · '+Object.keys(nProto).length+' protocols · normalized</span></div>';
+    h+='<div class="cmp-caveat"><b>Protocol-relative normalization (RFC 6349-style):</b> every cell is delivered-% vs that implementation’s OWN clean baseline — '+
+       'absolute throughput is NEVER compared across protocols, only the <i>shape</i> of each resilience curve. '+
+       '<span class="bid">SRT/RIST share a bidirectional schedule</span> (directly comparable); '+
+       '<span class="sch">MoQ is downlink-only</span> (impairing the QUIC ACK path starves recovery) and each MoQ row runs at its own bitrate — read MoQ against its own baseline, not against SRT/RIST or the other MoQ row.</div>';
+    h+='<div class="cmp-scroll"><table class="cmp"><thead><tr><th class="lcol">protocol ╲ severity</th>';
+    BUCKETS.forEach(function(b){ h+='<th>'+b.k+'<span class="axh">'+b.axh+'</span></th>'; });
+    h+='</tr></thead><tbody>';
+    var lastProto=null;
+    rows.forEach(function(r){
+      var top=(r.proto!==lastProto); lastProto=r.proto;
+      h+='<tr'+(top?' class="grp-top"':'')+'><th>'+
+         (top?'<span class="proto">'+escapeHtml(r.proto)+'</span>':'')+
+         '<span class="lib">'+escapeHtml(r.lib)+'</span>'+
+         '<span class="meta">'+r.tier+' · '+(r.downlink?'S2C':'bi')+'</span></th>';
+      r.cells.forEach(function(c){
+        if(!c){ h+='<td class="cnum na"><span class="pct">—</span></td>'; return; }
+        var v=V[c.verdict];
+        if(c.pct==null){ h+='<td class="cnum na '+v.cls+'"><span class="pct">wire</span><div class="sc">'+escapeHtml(c.scn)+'</div></td>'; return; }
+        var p=Math.max(0,Math.min(100,c.pct));
+        h+='<td class="cnum '+v.cls+'"><span class="pct">'+fmt(Math.round(c.pct*10)/10)+'<small style="font-size:.6rem;opacity:.6">%</small></span>'+
+           '<div class="bar"><i style="width:'+p+'%"></i></div><div class="sc">'+escapeHtml(c.scn)+'</div></td>';
+      });
+      h+='</tr>';
+    });
+    h+='</tbody></table></div>';
+    h+='<div class="cmp-foot">Specialized capability matrices (bonding, FEC, Tier-1 GE) are not loss-gradient comparisons and are shown only as their own sections below. '+
+       '<span class="bid">bi</span> = bidirectional schedule · <span class="sch">S2C</span> = downlink-only · <b>wire</b> = graded from the wire with no self-reported delivery %.</div>';
+    host.innerHTML=h;
+  }
+  buildCompare();
 
   // ── readout ──
   var ro=document.getElementById("readout");
