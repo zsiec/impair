@@ -5,8 +5,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/zsiec/impair/internal/scenario"
 	"github.com/zsiec/impair/internal/sim"
+	"github.com/zsiec/impair/scenario"
 )
 
 const seed = 1

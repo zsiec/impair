@@ -11,13 +11,13 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/zsiec/impair/engine"
 	"github.com/zsiec/impair/internal/cells/corrupt"
 	"github.com/zsiec/impair/internal/cells/delay"
 	"github.com/zsiec/impair/internal/cells/loss"
 	"github.com/zsiec/impair/internal/cells/ratelimit"
 	"github.com/zsiec/impair/internal/cells/reorder"
 	"github.com/zsiec/impair/internal/droplist"
-	"github.com/zsiec/impair/internal/engine"
 	"github.com/zsiec/impair/internal/rng"
 )
 

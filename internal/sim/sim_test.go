@@ -3,7 +3,7 @@ package sim
 import (
 	"testing"
 
-	"github.com/zsiec/impair/internal/engine"
+	"github.com/zsiec/impair/engine"
 )
 
 // nopCell forwards every packet unchanged — the minimal Cell, used to exercise

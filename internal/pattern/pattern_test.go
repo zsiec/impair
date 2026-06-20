@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zsiec/impair/internal/engine"
+	"github.com/zsiec/impair/engine"
 )
 
 // fixture builds a Recorder with a deterministic, representative mix of

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zsiec/impair/internal/engine"
+	"github.com/zsiec/impair/engine"
 )
 
 // Event is one ingress packet in a synthetic trace.

@@ -34,7 +34,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/zsiec/impair/internal/scenario"
+	"github.com/zsiec/impair/scenario"
 )
 
 // LossModel selects how a profile's loss is realized when compiled to a Stage.

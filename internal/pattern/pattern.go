@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/zsiec/impair/internal/engine"
+	"github.com/zsiec/impair/engine"
 )
 
 // Version is the format-version constant emitted in the header. Bump this only

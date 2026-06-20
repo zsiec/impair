@@ -5,7 +5,7 @@ import (
 	"math/bits"
 	"testing"
 
-	"github.com/zsiec/impair/internal/engine"
+	"github.com/zsiec/impair/engine"
 	"github.com/zsiec/impair/internal/rng"
 )
 
