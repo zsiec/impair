@@ -209,6 +209,53 @@ func TestRelaySelfOverhead(t *testing.T) {
 	}
 }
 
+// TestRelayTailDrop: with a bounded egress and a huge injected delay (so nothing
+// drains during the test), flooding past the cap must tail-drop the overflow —
+// recorded separately from impairment drops, and the queue stays bounded.
+func TestRelayTailDrop(t *testing.T) {
+	saved := maxQueued
+	maxQueued = 32
+	defer func() { maxQueued = saved }()
+
+	up, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer up.Close()
+	// 30 s delay parks every forward in the egress heap for the whole test.
+	eng := engine.New([]engine.Cell{&fixedDelay{d: (30 * time.Second).Nanoseconds()}}, nil)
+	r, err := New(eng, up.LocalAddr().String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	relayAddr, _ := net.ResolveUDPAddr("udp", r.Addr())
+	snd, _ := net.DialUDP("udp", nil, relayAddr)
+	defer snd.Close()
+
+	const sent = 200
+	for i := 0; i < sent; i++ {
+		_, _ = snd.Write([]byte("x"))
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.Stats().TailDropped > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	st := r.Stats()
+	if st.TailDropped == 0 {
+		t.Fatalf("expected tail-drops past cap %d with %d queued, got %+v", maxQueued, sent, st)
+	}
+	if st.Forwarded > uint64(maxQueued) {
+		t.Fatalf("forwarded %d exceeds cap %d — the 30s delay should hold them queued", st.Forwarded, maxQueued)
+	}
+	if st.Dropped != 0 {
+		t.Fatalf("tail-drop must not be counted as impairment Dropped: %+v", st)
+	}
+}
+
 // BenchmarkRelayThroughput pushes datagrams through a clean (no-delay) relay and
 // measures per-packet cost; run with -benchmem to confirm the sync.Pool keeps
 // steady-state allocations off the forward path.

@@ -32,13 +32,28 @@ import (
 // hands it a fresh copy it may keep.
 type Tap func(dir engine.Direction, data []byte)
 
-// Stats are relay-side ground truth counters.
+// Stats are relay-side ground truth counters. Dropped is impairment (the engine
+// decided to drop); TailDropped is the relay's OWN overflow (the bounded egress
+// queue was full) — kept separate so relay-induced loss never masquerades as
+// modeled loss.
 type Stats struct {
-	Forwarded uint64
-	Dropped   uint64
+	Forwarded   uint64
+	Dropped     uint64
+	TailDropped uint64
 }
 
 const maxDatagram = 2048
+
+// maxQueued bounds the egress heap (scheduled-but-not-yet-due forwards). Beyond
+// it, the relay tail-drops arriving forwards rather than grow without limit — so
+// a sustained over-rate (or a huge injected delay × high ingress) degrades as
+// bounded tail-drop, recorded in Stats, instead of unbounded memory. ~16K
+// datagrams ≈ 32 MB at maxDatagram. A var so tests can shrink it.
+var maxQueued = 16384
+
+// socketBuf is the kernel send/recv buffer size requested per relay socket;
+// larger buffers absorb bursts so kernel drops don't pollute the modeled loss.
+const socketBuf = 1 << 22 // 4 MiB
 
 // Relay proxies sender<->upstream through eng on a single read goroutine. eng is
 // held atomically so it can be swapped at runtime (SetEngine) for live control:
@@ -52,8 +67,8 @@ type Relay struct {
 	tap      Tap
 	base     time.Time
 
-	sender    atomic.Pointer[netip.AddrPort] // learned from the first non-upstream datagram
-	fwd, drop atomic.Uint64
+	sender              atomic.Pointer[netip.AddrPort] // learned from the first non-upstream datagram
+	fwd, drop, tailDrop atomic.Uint64
 
 	egMu  sync.Mutex
 	eg    egHeap
@@ -89,6 +104,8 @@ func NewOn(eng *engine.Engine, bindAddr, upstreamAddr string, tap Tap) (*Relay, 
 	if err != nil {
 		return nil, err
 	}
+	_ = pc.SetReadBuffer(socketBuf) // best-effort: absorb bursts, fewer kernel drops
+	_ = pc.SetWriteBuffer(socketBuf)
 	r := &Relay{
 		pc: pc, upstream: normAddr(up.AddrPort()), tap: tap, base: time.Now(),
 		wake:   make(chan struct{}, 1),
@@ -113,7 +130,7 @@ func (r *Relay) SetEngine(eng *engine.Engine) { r.eng.Store(eng) }
 
 // Stats returns a snapshot of relay ground-truth counters.
 func (r *Relay) Stats() Stats {
-	return Stats{Forwarded: r.fwd.Load(), Dropped: r.drop.Load()}
+	return Stats{Forwarded: r.fwd.Load(), Dropped: r.drop.Load(), TailDropped: r.tailDrop.Load()}
 }
 
 func (r *Relay) loop() {
@@ -181,6 +198,12 @@ func (r *Relay) enqueue(data []byte, dst netip.AddrPort, at int64) {
 	copy((*bp)[:len(data)], data)
 
 	r.egMu.Lock()
+	if len(r.eg) >= maxQueued { // bounded: reject-on-full (tail-drop)
+		r.egMu.Unlock()
+		r.putBuf(bp)
+		r.tailDrop.Add(1)
+		return
+	}
 	r.egOrd++
 	it := egItem{at: at, ord: r.egOrd, buf: bp, n: len(data), dst: dst}
 	heap.Push(&r.eg, it)
