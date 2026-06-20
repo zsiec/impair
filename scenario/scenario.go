@@ -12,6 +12,7 @@ import (
 	"io"
 
 	"github.com/zsiec/impair/engine"
+	"github.com/zsiec/impair/internal/cells/blackhole"
 	"github.com/zsiec/impair/internal/cells/corrupt"
 	"github.com/zsiec/impair/internal/cells/delay"
 	"github.com/zsiec/impair/internal/cells/loss"
@@ -55,6 +56,15 @@ type Stage struct {
 	Corrupt   *CorruptParams   `json:"corrupt,omitempty"`
 	RateLimit *RateLimitParams `json:"ratelimit,omitempty"`
 	DropList  *DropListParams  `json:"droplist,omitempty"`
+	Blackhole *BlackholeParams `json:"blackhole,omitempty"`
+}
+
+// BlackholeParams: a timed link outage — drops 100% of packets arriving in
+// [StartMs, EndMs). The deterministic primitive for failover scenarios (a link
+// goes dark mid-stream; a redundant 2022-7 path must mask it).
+type BlackholeParams struct {
+	StartMs float64 `json:"startMs"`
+	EndMs   float64 `json:"endMs"`
 }
 
 // LossParams: independent Bernoulli loss.
@@ -245,6 +255,13 @@ func buildCell(root *rng.Root, keyPrefix, dir string, idx int, st Stage) (engine
 	if st.DropList != nil {
 		set++
 		cell = droplist.NewDropList(droplist.DropListConfig{Seqs: st.DropList.Seqs}, sub("droplist"))
+	}
+	if st.Blackhole != nil {
+		set++
+		cell = blackhole.New(blackhole.Config{
+			StartNs: int64(st.Blackhole.StartMs * msToNs),
+			EndNs:   int64(st.Blackhole.EndMs * msToNs),
+		})
 	}
 	if set == 0 {
 		return nil, fmt.Errorf("empty stage (no impairment set)")
