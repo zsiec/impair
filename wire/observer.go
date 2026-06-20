@@ -7,9 +7,13 @@ import "github.com/zsiec/impair/engine"
 // retransmissions, NAK'd sequence numbers, and ACK progression. The resulting
 // Observation is what the oracle judges against expected protocol behaviour.
 type Observer struct {
-	obs     Observation
-	ackSeen bool   // whether any ACK seq has been observed yet
-	lastAck uint32 // most recently observed ACK'd sequence number
+	obs Observation
+	// ACK monotonicity is tracked PER DIRECTION: SRT is bidirectional, so each
+	// endpoint's receiver-side emits its own ACK stream (the data receiver's
+	// ACKs advance; an idle endpoint's ACKs sit at its ISN). Pooling the two
+	// would spuriously look non-monotonic.
+	ackSeen [2]bool
+	lastAck [2]uint32
 }
 
 // NewObserver returns an Observer ready to accumulate. AckMonotonic starts true
@@ -28,7 +32,6 @@ func NewObserver() *Observer {
 // Datagrams too short to decode are ignored. The direction is currently
 // informational (both directions feed the same Observation).
 func (o *Observer) Observe(dir engine.Direction, data []byte) {
-	_ = dir
 	p, ok := Decode(data)
 	if !ok {
 		return
@@ -55,7 +58,7 @@ func (o *Observer) Observe(dir engine.Direction, data []byte) {
 		o.obs.AckAcks++
 	case CtrlACK:
 		o.obs.ACKs++
-		o.recordAck(p.AckSeq)
+		o.recordAck(dir, p.AckSeq)
 	case CtrlNAK:
 		o.obs.NAKs++
 		for _, s := range p.NakSeqs {
@@ -66,15 +69,16 @@ func (o *Observer) Observe(dir engine.Direction, data []byte) {
 
 // recordAck tracks the highest acknowledged sequence number and detects any
 // backwards movement in the ACK'd sequence.
-func (o *Observer) recordAck(seq uint32) {
-	if o.ackSeen && seq < o.lastAck {
+func (o *Observer) recordAck(dir engine.Direction, seq uint32) {
+	d := int(dir)
+	if o.ackSeen[d] && seq < o.lastAck[d] {
 		o.obs.AckMonotonic = false
 	}
-	if !o.ackSeen || seq > o.obs.MaxAckSeq {
+	if seq > o.obs.MaxAckSeq {
 		o.obs.MaxAckSeq = seq
 	}
-	o.lastAck = seq
-	o.ackSeen = true
+	o.lastAck[d] = seq
+	o.ackSeen[d] = true
 }
 
 // Observation returns the accumulated wire facts.
