@@ -45,15 +45,26 @@ type Relay struct {
 	wg        sync.WaitGroup
 }
 
-// New binds a relay socket on 127.0.0.1 and forwards to upstreamAddr through eng.
-// The sender address is learned from the first non-upstream datagram. tap may be
-// nil.
+// New binds a relay socket on a free 127.0.0.1 port and forwards to upstreamAddr
+// through eng. The sender address is learned from the first non-upstream
+// datagram. tap may be nil.
 func New(eng *engine.Engine, upstreamAddr string, tap Tap) (*Relay, error) {
+	return NewOn(eng, "127.0.0.1:0", upstreamAddr, tap)
+}
+
+// NewOn is New with an explicit bind address — needed for protocols that derive
+// peer ports from a base (e.g. RIST Simple Profile uses RTP on an even port and
+// RTCP on port+1, so a dual-port relay must bind a specific even/odd pair).
+func NewOn(eng *engine.Engine, bindAddr, upstreamAddr string, tap Tap) (*Relay, error) {
 	up, err := net.ResolveUDPAddr("udp", upstreamAddr)
 	if err != nil {
 		return nil, err
 	}
-	pc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	bind, err := net.ResolveUDPAddr("udp", bindAddr)
+	if err != nil {
+		return nil, err
+	}
+	pc, err := net.ListenUDP("udp", bind)
 	if err != nil {
 		return nil, err
 	}
