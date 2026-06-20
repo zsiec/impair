@@ -249,6 +249,32 @@ const dashboardSource = `<!DOCTYPE html>
   .method .m b .tag { color:var(--c,var(--phos)); }
   .colophon { margin-top:1.4rem; color:var(--faint); font-size:.64rem; letter-spacing:.1em; text-align:center; }
   .colophon b { color:var(--phos-dim); }
+  /* ── Resilience Theater (cross-protocol curves) ── */
+  .thhead { display:flex; align-items:baseline; gap:.7rem; margin-bottom:.7rem; }
+  .thhead .seq { color:var(--phos); font-size:.9rem; }
+  .thhead h2 { margin:0; font-size:1.05rem; letter-spacing:.04em; color:var(--ink2); font-weight:600; }
+  .thhead .sub { color:var(--muted); font-size:.66rem; letter-spacing:.04em; }
+  .thlegend { display:flex; flex-wrap:wrap; gap:.9rem; margin-bottom:.4rem; }
+  .thlg { display:inline-flex; align-items:center; gap:.4em; font-size:.64rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+  .thlg i { width:18px; height:3px; border-radius:2px; display:inline-block; }
+  .thsvg { width:100%; height:auto; display:block; background:linear-gradient(180deg,#06090d,#04060a); border:1px solid var(--line); border-radius:5px; }
+  .thsvg .thgrid { stroke:#16202a; stroke-width:1; }
+  .thsvg .thax { stroke:#111a22; stroke-width:1; stroke-dasharray:2 4; }
+  .thsvg .thylab { fill:var(--faint); font:600 9px ui-monospace,monospace; text-anchor:end; }
+  .thsvg .thxlab { fill:var(--muted); font:600 9.5px ui-monospace,monospace; text-anchor:middle; letter-spacing:.12em; }
+  .thsvg .thband { opacity:.10; stroke:none; transition:opacity .12s; }
+  .thsvg .thline { fill:none; stroke-width:2; opacity:.92; transition:opacity .12s,stroke-width .12s; }
+  .thsvg .thdot { stroke:#04060a; stroke-width:1; transition:opacity .12s; }
+  .thsvg .thend { font:600 9.5px ui-monospace,monospace; transition:opacity .12s; }
+  .thsvg .dim { opacity:.12 !important; }
+  .thsvg .thline.hot { stroke-width:3.4; opacity:1; filter:drop-shadow(0 0 7px currentColor); }
+  .thsvg .thband.hot { opacity:.26 !important; }
+  .thsvg .thend.hot { font-weight:800; }
+  .thnarr { margin-top:.8rem; padding:.7rem .9rem; border-left:2px solid var(--phos-dim); background:rgba(47,224,138,.04);
+            font-size:.78rem; line-height:1.7; color:var(--ink); letter-spacing:.01em; }
+  .thnarr b { font-weight:700; } .thnarr .c-pass { color:var(--phos); } .thnarr .c-fail { color:var(--red); }
+  .thfoot { margin-top:.7rem; color:var(--faint); font-size:.64rem; line-height:1.6; }
+  .thempty { color:var(--muted); font-style:italic; padding:3rem 1rem; text-align:center; }
   /* ── "what survived" glass-to-glass filmstrip (per-cell baked frames) ── */
   .gtape { margin:.3rem 0 .9rem; border:1px solid var(--line); border-radius:4px; overflow:hidden; background:#04060a; }
   .gtape .gth { display:flex; align-items:center; gap:.5rem; padding:.5rem .7rem; border-bottom:1px solid var(--line);
@@ -308,6 +334,7 @@ const dashboardSource = `<!DOCTYPE html>
 
   <section class="launcher" id="launcher" style="display:none"></section>
   <section class="compare" id="compare"></section>
+  <section class="theater" id="theater" style="display:none"></section>
 
   <div class="deck">
     <main id="sections"></main>
@@ -387,7 +414,16 @@ const dashboardSource = `<!DOCTYPE html>
     {k:"BURST", axh:"bursty / GE", match:function(s){return s==="lossy-burst"||s==="downlink-burst";}}
   ];
   function bucketScn(m,b){ for(var i=0;i<m.scenarios.length;i++){ if(b.match(m.scenarios[i])) return m.scenarios[i]; } return null; }
-  function buildCompare(){
+  // ciOf pulls a cell's bootstrap CI band (delivered-% Lo/Hi) when present.
+  function ciOf(res){ var m=res.metrics||{};
+    var lo=m.deliveredPctLo!=null?m.deliveredPctLo:m.deliveryPctLo;
+    var hi=m.deliveredPctHi!=null?m.deliveredPctHi:m.deliveryPctHi;
+    return {lo:(lo!=null?lo:null), hi:(hi!=null?hi:null)};
+  }
+  // compareRows reduces every loss-gradient matrix to one row per impl: its
+  // delivered-% (+ CI) across the shared CLEAN / STEADY-LOSS / BURST severity axis.
+  // Shared by the cross-protocol TABLE and the Resilience THEATER curves.
+  function compareRows(){
     var rows=[];
     DATA.sections.forEach(function(s,si){
       var m=s.matrix;
@@ -402,11 +438,16 @@ const dashboardSource = `<!DOCTYPE html>
         var cells=BUCKETS.map(function(b){
           var scn=bucketScn(m,b); if(!scn) return null;
           var res=cellFor(m,lib,scn); if(!res) return null;
-          return {pct:deliv(res), verdict:rollup(res), scn:scn};
+          var ci=ciOf(res);
+          return {pct:deliv(res), lo:ci.lo, hi:ci.hi, verdict:rollup(res), scn:scn};
         });
         rows.push({si:si, proto:proto, lib:lib, tier:t1?"T1":"T2", downlink:downlink, cells:cells});
       });
     });
+    return rows;
+  }
+  function buildCompare(){
+    var rows=compareRows();
     var host=document.getElementById("compare");
     if(!rows.length){ host.style.display="none"; return; }
     var nProto={}; rows.forEach(function(r){nProto[r.proto]=1;});
@@ -450,6 +491,71 @@ const dashboardSource = `<!DOCTYPE html>
     });
   }
   buildCompare();
+
+  // ── Resilience Theater: the cross-protocol story as overlaid curves ──
+  // Each impl's delivered-% plotted across CLEAN → STEADY → BURST, normalized to
+  // its own clean baseline, family-coloured (ARQ greens hold the line; MoQ cyan
+  // collapses at BURST) with bootstrap-CI ribbons. The hero read of the moat.
+  var THEFAM={SRT:"#2fe08a", RIST:"#54d6c0", MoQ:"#6ee7ff", "2022-7":"#f1a52f", "2022-1":"#f1a52f"};
+  function theFam(p){ return THEFAM[p]||"#9bb0a6"; }
+  function buildTheater(){
+    var host=document.getElementById("theater"); if(!host) return;
+    var rows=compareRows().filter(function(r){ return r.cells.length===3 && r.cells.every(function(c){return c&&c.pct!=null;}); });
+    if(!rows.length){ host.innerHTML='<div class="thempty">No loss-gradient matrices loaded — run the SRT / RIST / MoQ matrices to populate the resilience curves.</div>'; return; }
+    var W=980,H=460,ml=52,mr=196,mt=26,mb=58,pw=W-ml-mr,ph=H-mt-mb;
+    var xs=[ml, ml+pw/2, ml+pw];
+    function yOf(p){ return mt+ph*(1-Math.max(0,Math.min(100,p))/100); }
+    var s='<svg viewBox="0 0 '+W+' '+H+'" class="thsvg" preserveAspectRatio="xMidYMid meet">';
+    [0,25,50,75,100].forEach(function(g){ var y=yOf(g); s+='<line class="thgrid" x1="'+ml+'" y1="'+y+'" x2="'+(ml+pw)+'" y2="'+y+'"/>'+
+      '<text class="thylab" x="'+(ml-9)+'" y="'+(y+3)+'">'+g+'</text>'; });
+    ["CLEAN","STEADY LOSS","BURST"].forEach(function(lab,i){
+      s+='<line class="thax" x1="'+xs[i]+'" y1="'+mt+'" x2="'+xs[i]+'" y2="'+(mt+ph)+'"/>'+
+         '<text class="thxlab" x="'+xs[i]+'" y="'+(H-mb+24)+'">'+lab+'</text>'; });
+    // CI ribbons first (under the lines)
+    rows.forEach(function(r,ri){
+      if(!r.cells.some(function(c){return c.lo!=null&&c.hi!=null;})) return;
+      var up="",dn="";
+      r.cells.forEach(function(c,i){ up+=xs[i]+","+yOf(c.hi!=null?c.hi:c.pct)+" "; });
+      for(var i=2;i>=0;i--){ var c=r.cells[i]; dn+=xs[i]+","+yOf(c.lo!=null?c.lo:c.pct)+" "; }
+      s+='<polygon class="thband" data-row="'+ri+'" points="'+up+dn+'" style="fill:'+theFam(r.proto)+'"/>';
+    });
+    // lines + dots + end labels
+    var ends=[];
+    rows.forEach(function(r,ri){
+      var col=theFam(r.proto), pts=r.cells.map(function(c,i){return xs[i]+","+yOf(c.pct);});
+      s+='<polyline class="thline" data-row="'+ri+'" points="'+pts.join(" ")+'" style="stroke:'+col+'"/>';
+      r.cells.forEach(function(c,i){ s+='<circle class="thdot" data-row="'+ri+'" cx="'+xs[i]+'" cy="'+yOf(c.pct)+'" r="3.4" style="fill:'+col+'"><title>'+escapeHtml(r.lib)+' · '+escapeHtml(c.scn)+' · '+fmt(Math.round(c.pct*10)/10)+'%</title></circle>'; });
+      ends.push({y:yOf(r.cells[2].pct), col:col, lib:r.lib, pct:r.cells[2].pct, ri:ri});
+    });
+    // de-overlap end labels (greedy push-down)
+    ends.sort(function(a,b){return a.y-b.y;});
+    for(var i=1;i<ends.length;i++){ if(ends[i].y-ends[i-1].y<13) ends[i].y=ends[i-1].y+13; }
+    ends.forEach(function(e){ s+='<text class="thend" data-row="'+e.ri+'" x="'+(ml+pw+10)+'" y="'+(e.y+3)+'" style="fill:'+e.col+'">'+escapeHtml(e.lib)+' '+fmt(Math.round(e.pct))+'%</text>'; });
+    s+='</svg>';
+    // the story line: ARQ vs MoQ at BURST
+    var arq=rows.filter(function(r){return r.proto==="SRT"||r.proto==="RIST";}).map(function(r){return r.cells[2].pct;});
+    var moq=rows.filter(function(r){return r.proto==="MoQ";}).map(function(r){return r.cells[2].pct;});
+    function avg(a){return a.length?a.reduce(function(x,y){return x+y;},0)/a.length:null;}
+    var narr="";
+    if(arq.length&&moq.length){
+      narr='Under <b>BURST</b> loss, ARQ (SRT/RIST) holds <b class="c-pass">~'+Math.round(avg(arq))+'%</b> of its own baseline — the retransmit rides out the loss runs — while MoQ-over-QUIC collapses to <b class="c-fail">~'+Math.round(avg(moq))+'%</b> (head-of-line blocking, no recovery in the live window). Steady loss both recover; the burst is the knee.';
+    }
+    var fams={}; rows.forEach(function(r){fams[r.proto]=1;});
+    var legend=Object.keys(fams).map(function(p){return '<span class="thlg"><i style="background:'+theFam(p)+'"></i>'+escapeHtml(p)+'</span>';}).join("");
+    host.innerHTML='<div class="thhead"><span class="seq">∑</span><h2>Resilience Theater</h2>'+
+      '<span class="sub">'+rows.length+' impls · delivered % vs severity · each normalized to its own clean baseline</span></div>'+
+      '<div class="thlegend">'+legend+'</div>'+s+
+      (narr?'<div class="thnarr">'+narr+'</div>':'')+
+      '<div class="thfoot">Y axis is each implementation’s delivered-% against its OWN clean baseline (RFC-6349-style) — the <i>shape</i> of resilience, never absolute throughput across protocols. CI ribbons are bootstrap bands where reps exist.</div>';
+    // hover a line/label to spotlight it
+    function spot(ri){ host.querySelectorAll(".thline,.thband,.thdot,.thend").forEach(function(el){
+      var on=ri==null||+el.dataset.row===ri; el.classList.toggle("dim",ri!=null&&!on); el.classList.toggle("hot",ri!=null&&on); }); }
+    host.querySelectorAll(".thline,.thend").forEach(function(el){
+      el.addEventListener("mouseenter",function(){spot(+el.dataset.row);});
+      el.addEventListener("mouseleave",function(){spot(null);});
+    });
+  }
+  buildTheater();
 
   // ── run-launcher (only when served by the cockpit; static file has no API) ──
   function buildLauncher(){
