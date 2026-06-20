@@ -1,0 +1,97 @@
+[
+  {
+    "name": "g1050-A",
+    "profile": {
+      "name": "g1050-A",
+      "description": "pristine backbone / managed LAN (excellent)",
+      "grade": 0,
+      "cite": "ITU-T G.1050 (2016) / TIA-921 IP network model — service-level structure (parametric approximation; not transcribed) — service level A",
+      "source": "G.1050",
+      "license": "model-parameters only (no standard text or measured data redistributed); see package doc",
+      "notes": "G.1050/TIA-921-inspired parametric preset (structure only)",
+      "lossModel": "bernoulli",
+      "lossPct": 0,
+      "baseDelayMs": 1
+    }
+  },
+  {
+    "name": "g1050-B",
+    "profile": {
+      "name": "g1050-B",
+      "description": "well-provisioned broadband (good)",
+      "grade": 1,
+      "cite": "ITU-T G.1050 (2016) / TIA-921 IP network model — service-level structure (parametric approximation; not transcribed) — service level B",
+      "source": "G.1050",
+      "license": "model-parameters only (no standard text or measured data redistributed); see package doc",
+      "notes": "G.1050/TIA-921-inspired parametric preset (structure only)",
+      "lossModel": "bernoulli",
+      "lossPct": 0.1,
+      "baseDelayMs": 20,
+      "jitterMs": 3,
+      "delayDist": "uniform"
+    }
+  },
+  {
+    "name": "g1050-C",
+    "profile": {
+      "name": "g1050-C",
+      "description": "mobile / LTE-ish access (fair)",
+      "grade": 2,
+      "cite": "ITU-T G.1050 (2016) / TIA-921 IP network model — service-level structure (parametric approximation; not transcribed) — service level C",
+      "source": "TIA-921",
+      "license": "model-parameters only (no standard text or measured data redistributed); see package doc",
+      "notes": "G.1050/TIA-921-inspired parametric preset (structure only)",
+      "lossModel": "ge",
+      "lossPct": 1,
+      "burstR": 0.5,
+      "baseDelayMs": 45,
+      "delayDist": "normal",
+      "sigmaMs": 12,
+      "delayCorrelation": 0.3,
+      "reorderPct": 1,
+      "reorderGapMs": 5
+    }
+  },
+  {
+    "name": "g1050-D",
+    "profile": {
+      "name": "g1050-D",
+      "description": "heavily congested access (poor)",
+      "grade": 3,
+      "cite": "ITU-T G.1050 (2016) / TIA-921 IP network model — service-level structure (parametric approximation; not transcribed) — service level D",
+      "source": "TIA-921",
+      "license": "model-parameters only (no standard text or measured data redistributed); see package doc",
+      "notes": "G.1050/TIA-921-inspired parametric preset (structure only)",
+      "lossModel": "ge",
+      "lossPct": 3,
+      "burstR": 0.35,
+      "baseDelayMs": 90,
+      "delayDist": "normal",
+      "sigmaMs": 30,
+      "delayCorrelation": 0.4,
+      "reorderPct": 3,
+      "reorderGapMs": 10
+    }
+  },
+  {
+    "name": "g1050-E",
+    "profile": {
+      "name": "g1050-E",
+      "description": "stressed / lossy edge (severe)",
+      "grade": 4,
+      "cite": "ITU-T G.1050 (2016) / TIA-921 IP network model — service-level structure (parametric approximation; not transcribed) — service level E",
+      "source": "TIA-921",
+      "license": "model-parameters only (no standard text or measured data redistributed); see package doc",
+      "notes": "G.1050/TIA-921-inspired parametric preset (structure only)",
+      "lossModel": "ge",
+      "lossPct": 8,
+      "burstR": 0.25,
+      "baseDelayMs": 150,
+      "delayDist": "normal",
+      "sigmaMs": 60,
+      "delayCorrelation": 0.5,
+      "reorderPct": 6,
+      "reorderGapMs": 20
+    }
+  }
+]

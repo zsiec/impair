@@ -48,6 +48,40 @@ const (
 	LossGE LossModel = "ge"
 )
 
+// Source is the controlled vocabulary for where a profile's parameters come
+// from (PLAN.md §(b), the #Profile.source enum). Provenance lint requires every
+// registered profile to declare one of these.
+type Source string
+
+const (
+	// SourceG1050 — derived from the ITU-T G.1050 IP-network model structure.
+	SourceG1050 Source = "G.1050"
+	// SourceTIA921 — derived from TIA-921, G.1050's TIA counterpart.
+	SourceTIA921 Source = "TIA-921"
+	// SourceNetemDoc — modeled on the Linux netem documentation's worked examples.
+	SourceNetemDoc Source = "netem-doc"
+	// SourceMeasured — taken from a real-network measurement / capture.
+	SourceMeasured Source = "measured"
+	// SourceSynthetic — engineered by us from published model parameters; no
+	// third-party data redistributed.
+	SourceSynthetic Source = "synthetic"
+)
+
+// validSources is the closed set the provenance lint checks Source against.
+var validSources = map[Source]struct{}{
+	SourceG1050:     {},
+	SourceTIA921:    {},
+	SourceNetemDoc:  {},
+	SourceMeasured:  {},
+	SourceSynthetic: {},
+}
+
+// ValidSource reports whether s is a member of the controlled source vocabulary.
+func ValidSource(s Source) bool {
+	_, ok := validSources[s]
+	return ok
+}
+
 // Profile is a named, seedable network service level. It is the G.1050-inspired
 // description of one end-to-end IP path quality, in friendly units (percentages
 // and milliseconds). Compile turns it into a scenario.Scenario.
@@ -59,6 +93,21 @@ type Profile struct {
 	// Grade is the ordinal position on the impairment ladder (0 = pristine,
 	// higher = worse). Used only for ordering/reporting.
 	Grade int `json:"grade"`
+
+	// --- Mandatory provenance (PLAN.md §(b), [DECIDED]) -------------------
+	// No anonymous magic numbers: every registered profile must carry all
+	// three. TestAllProfilesHaveProvenance is the CI gate that enforces it.
+
+	// Cite is the human-readable citation: the RFC / ITU rec / paper / standard
+	// the parameters trace back to, e.g. "ITU-T G.1050 (2016) service level B".
+	Cite string `json:"cite"`
+	// Source is the controlled-vocabulary origin (one of the Source constants).
+	Source Source `json:"source"`
+	// License is the redistribution license of the underlying data/model, e.g.
+	// "CC-BY-4.0", "model-parameters (no data redistributed)".
+	License string `json:"license"`
+	// Notes is optional free-form provenance detail (not lint-required).
+	Notes string `json:"notes,omitempty"`
 
 	// LossModel selects Bernoulli vs Gilbert-Elliott loss realization.
 	LossModel LossModel `json:"lossModel,omitempty"`
@@ -164,6 +213,38 @@ func (p Profile) Compile(seed int64) scenario.Scenario {
 	}
 }
 
+// Provenance bundles the three mandatory citation fields for reporting.
+type Provenance struct {
+	Cite    string `json:"cite"`
+	Source  Source `json:"source"`
+	License string `json:"license"`
+}
+
+// Provenance returns the profile's citation triple.
+func (p Profile) Provenance() Provenance {
+	return Provenance{Cite: p.Cite, Source: p.Source, License: p.License}
+}
+
+// ValidateProvenance returns an error if any mandatory provenance field is
+// missing or if Source is outside the controlled vocabulary. This is the check
+// the CI lint (TestAllProfilesHaveProvenance) runs against every registered
+// profile, and that importers run on every emitted profile.
+func (p Profile) ValidateProvenance() error {
+	if p.Cite == "" {
+		return fmt.Errorf("profile %q: missing Cite", p.Name)
+	}
+	if p.Source == "" {
+		return fmt.Errorf("profile %q: missing Source", p.Name)
+	}
+	if !ValidSource(p.Source) {
+		return fmt.Errorf("profile %q: invalid Source %q (want one of G.1050/TIA-921/netem-doc/measured/synthetic)", p.Name, p.Source)
+	}
+	if p.License == "" {
+		return fmt.Errorf("profile %q: missing License", p.Name)
+	}
+	return nil
+}
+
 // Profiles returns the built-in G.1050-inspired service-level ladder, keyed by
 // name. The set spans a graded range from pristine to severe IP impairment.
 //
@@ -174,69 +255,11 @@ func (p Profile) Compile(seed int64) scenario.Scenario {
 //	g1050-C  lte         mobile/LTE-ish: moderate burst loss, higher delay+jitter, light reorder
 //	g1050-D  congested   heavily congested access: appreciable burst loss, large jittery delay, reorder
 //	g1050-E  severe      stressed/lossy edge: severe burst loss, very large delay variation, heavy reorder
+//
+// Each profile carries mandatory provenance (Cite/Source/License); the concrete
+// definitions live in the G.1050/TIA-921 importer (g1050.go).
 func Profiles() map[string]Profile {
-	return map[string]Profile{
-		"g1050-A": {
-			Name:        "g1050-A",
-			Description: "pristine backbone / managed LAN (excellent)",
-			Grade:       0,
-			LossModel:   LossBernoulli,
-			LossPct:     0,
-			BaseDelayMs: 1,
-		},
-		"g1050-B": {
-			Name:        "g1050-B",
-			Description: "well-provisioned broadband (good)",
-			Grade:       1,
-			LossModel:   LossBernoulli,
-			LossPct:     0.1,
-			BaseDelayMs: 20,
-			JitterMs:    3,
-			DelayDist:   "uniform",
-		},
-		"g1050-C": {
-			Name:             "g1050-C",
-			Description:      "mobile / LTE-ish access (fair)",
-			Grade:            2,
-			LossModel:        LossGE,
-			LossPct:          1.0,
-			BurstR:           0.5,
-			BaseDelayMs:      45,
-			SigmaMs:          12,
-			DelayDist:        "normal",
-			DelayCorrelation: 0.3,
-			ReorderPct:       1.0,
-			ReorderGapMs:     5,
-		},
-		"g1050-D": {
-			Name:             "g1050-D",
-			Description:      "heavily congested access (poor)",
-			Grade:            3,
-			LossModel:        LossGE,
-			LossPct:          3.0,
-			BurstR:           0.35,
-			BaseDelayMs:      90,
-			SigmaMs:          30,
-			DelayDist:        "normal",
-			DelayCorrelation: 0.4,
-			ReorderPct:       3.0,
-			ReorderGapMs:     10,
-		},
-		"g1050-E": {
-			Name:             "g1050-E",
-			Description:      "stressed / lossy edge (severe)",
-			Grade:            4,
-			LossModel:        LossGE,
-			LossPct:          8.0,
-			BurstR:           0.25,
-			BaseDelayMs:      150,
-			SigmaMs:          60,
-			DelayDist:        "normal",
-			DelayCorrelation: 0.5,
-			ReorderPct:       6.0,
-			ReorderGapMs:     20,
-		},
-	}
+	return G1050Profiles()
 }
 
 // Names returns the built-in profile names sorted by impairment grade (then
