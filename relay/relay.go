@@ -11,6 +11,7 @@ package relay
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zsiec/impair/engine"
@@ -28,11 +29,15 @@ type Stats struct {
 	Dropped   uint64
 }
 
-// Relay proxies sender<->upstream through eng on a single read goroutine.
+// Relay proxies sender<->upstream through eng on a single read goroutine. eng is
+// held atomically so it can be swapped at runtime (SetEngine) for live control:
+// the loop reads the current engine per packet, and a mutation just changes which
+// engine the next packet uses. A live-mutated run is no longer bit-deterministic
+// (the impairment changes mid-stream) — that is the Tier-2 live-control trade-off.
 type Relay struct {
 	pc       *net.UDPConn
 	upstream *net.UDPAddr
-	eng      *engine.Engine
+	eng      atomic.Pointer[engine.Engine]
 	tap      Tap
 	base     time.Time
 
@@ -68,7 +73,8 @@ func NewOn(eng *engine.Engine, bindAddr, upstreamAddr string, tap Tap) (*Relay, 
 	if err != nil {
 		return nil, err
 	}
-	r := &Relay{pc: pc, upstream: up, eng: eng, tap: tap, base: time.Now(), closed: make(chan struct{})}
+	r := &Relay{pc: pc, upstream: up, tap: tap, base: time.Now(), closed: make(chan struct{})}
+	r.eng.Store(eng)
 	r.wg.Add(1)
 	go r.loop()
 	return r, nil
@@ -76,6 +82,12 @@ func NewOn(eng *engine.Engine, bindAddr, upstreamAddr string, tap Tap) (*Relay, 
 
 // Addr is the relay's listen address (what the sender dials).
 func (r *Relay) Addr() string { return r.pc.LocalAddr().String() }
+
+// SetEngine atomically swaps the impairment engine the relay applies to
+// subsequent packets — the runtime-mutation primitive behind live control
+// (Toxiproxy-style toxics). The previous engine is simply no longer consulted; in
+// flight scheduled forwards already committed by the old engine still fire.
+func (r *Relay) SetEngine(eng *engine.Engine) { r.eng.Store(eng) }
 
 // Stats returns a snapshot of relay ground-truth counters.
 func (r *Relay) Stats() Stats {
@@ -129,7 +141,7 @@ func (r *Relay) loop() {
 			r.tap(dir, data)
 		}
 
-		for _, a := range r.eng.Handle(engine.Packet{Data: data, Dir: dir}, recvAt) {
+		for _, a := range r.eng.Load().Handle(engine.Packet{Data: data, Dir: dir}, recvAt) {
 			if a.Kind == engine.Drop {
 				r.mu.Lock()
 				r.stats.Dropped++
