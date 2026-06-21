@@ -18,6 +18,7 @@ Most network emulators (`netem`, Toxiproxy, Comcast) impair bytes blindly and ro
 - **Sans-I/O core** — the `engine` owns no sockets and no clock; you feed it `(virtual-time, packet)` and it returns the actions. Pure, testable, and trivially golden-tested.
 - **Real-socket relays** — `relay` (single-port, SRT-style) and `ristrelay` (dual-port RTP/RTCP for RIST Simple Profile) apply the engine's decisions to live UDP traffic, with a live-swappable engine for interactive tuning.
 - **Protocol-aware wire observers + oracles** — decode SRT/RIST off the wire (control vs data, retransmits, NAKs, ACK progression) and grade conformance from **ground truth**, never the implementation's self-reported stats.
+- **Extensible by protocol** — grading (`grade`), wire-fact bookkeeping (`wireobs`), and the relay datapath (`relaycore`) are protocol-agnostic shared cores; SRT and RIST are plug-ins that add only their wire decoder, check roster, and socket topology, so a new protocol slots in without re-deriving the plumbing.
 - **Recovery models** — SMPTE ST 2022-1 FEC and ST 2022-7 seamless-redundancy oracles for "should this have been recoverable?" checks.
 - **An encrypted-flow guard** — payload-selective cells are refused at build time on flows whose media plane is opaque (SRT-KM, RIST-DTLS, QUIC/MoQ), so impairment never silently no-ops on ciphertext.
 - **Zero dependencies** — the entire module is stdlib-only.
@@ -98,7 +99,9 @@ log.Printf("forwarded=%d dropped=%d tail-dropped=%d", st.Forwarded, st.Dropped, 
 
 1. **The engine (Sans-I/O).** `engine.Engine` runs one ordered `Cell` pipeline per direction. `Handle(packet, recvAt)` returns a deterministic slice of `Action`s (Forward/Drop, with delivery time and drop reason). It touches no sockets and reads no real clock — all timing is virtual — so it is exhaustively golden-testable and bit-reproducible.
 
-2. **The drivers (real I/O).** `relay` and `ristrelay` are thin UDP proxies that call the engine for each datagram and carry out its decisions on a min-heap scheduler. They are where virtual time meets the wall clock.
+2. **The drivers (real I/O).** `relay` (SRT, single-port) and `ristrelay` (RIST, dual-port) are thin transports over a shared `relaycore.Core` — the min-heap egress scheduler, buffer pool, and OWD ledger that turn the engine's virtual-time decisions into wall-clock socket writes. A transport supplies only its socket topology and direction classification.
+
+Per-protocol support is **plug-in over shared cores.** Grading (`grade`), wire-fact bookkeeping (`wireobs`), and the relay datapath (`relaycore`) are protocol-agnostic; SRT, RIST, and (later) MoQ each contribute only their wire decoder, check roster, and socket topology. Adding a protocol means writing those, not re-deriving the plumbing.
 
 A **`Scenario`** (`scenario` package) is the serializable front door: a seed plus a pipeline of stages (or separate client→server / server→client pipelines). `scenario.Build` compiles it into an `engine.Engine`, allocating each cell its own deterministic RNG substream keyed by position — this is what lets you reorder or insert stages without perturbing the others' draws. Scenarios round-trip to JSON (`scenario.Load` / `scenario.Save`).
 
@@ -113,17 +116,31 @@ Keeping that line honest is the point: the engine is a reproducible *cause*, not
 
 ## Packages
 
+The engine and the protocol-agnostic shared cores:
+
 | Package | What it does |
 |---|---|
 | [`engine`](engine) | Sans-I/O deterministic core — runs a packet through per-direction cell pipelines, returns Forward/Drop actions. No I/O, no real clock. |
 | [`scenario`](scenario) | Declarative, serializable config → built engine, with per-cell keyed RNG substreams. The single config target for UI/CLI/JSON. |
-| [`relay`](relay) | Real-socket UDP relay (SRT-style, single-port) that applies engine decisions; live-swappable engine; optional one-way-delay ledger. |
-| [`ristrelay`](ristrelay) | Dual-port relay for RIST Simple Profile (even RTP / odd RTCP) — impairs media, passes RTCP cleanly. |
-| [`wire`](wire) / [`ristwire`](ristwire) | Sans-I/O SRT / RIST wire decoders + passive observers (retransmits, NAKs, ACK progression, seq gaps). |
-| [`quicwire`](quicwire) | Best-effort QUIC/MoQ header sniff to auto-label encrypted flows. |
-| [`oracle`](oracle) / [`ristoracle`](ristoracle) | Grade wire observations into pass/warn/fail checks from spec-derived invariants. |
-| [`fec`](fec) / [`bond`](bond) | SMPTE ST 2022-1 FEC and ST 2022-7 seamless-redundancy recoverability models + oracles. |
+| [`relaycore`](relaycore) | The shared real-socket datapath: min-heap egress scheduler, buffer pool, OWD ledger, and lifecycle, driven by a per-protocol transport (generic over the destination type). |
+| [`wireobs`](wireobs) | Generic `Counters[S]` spine (data/control counts, retransmit-request fold, sequence sets) embedded by every wire observer. |
+| [`grade`](grade) | Protocol-agnostic grading toolkit — the run-accounting Input, the universal delivery graders, and presence/feedback templates shared by every oracle. |
 | [`result`](result) | Shared verdict vocabulary (Verdict / Check / Result / Matrix) — a dependency-free contract. |
+
+Per-protocol plug-ins — each contributes only its wire decoder, oracle roster, and socket topology over the cores above:
+
+| Package | What it does |
+|---|---|
+| [`wire`](wire) / [`ristwire`](ristwire) | SRT / RIST wire decoders + passive observers over `wireobs.Counters` (retransmits, NAKs/NACKs, ACK progression, seq gaps). |
+| [`oracle`](oracle) / [`ristoracle`](ristoracle) | SRT / RIST oracles over the `grade` toolkit — each adds its check roster + protocol-specific graders (SRT ARQ predicate + ack-monotonic; RIST retransmit-under-loss). |
+| [`relay`](relay) / [`ristrelay`](ristrelay) | SRT single-port / RIST dual-port (even RTP, odd RTCP passed clean) transports over `relaycore`; live-swappable engine. |
+| [`quicwire`](quicwire) | Best-effort QUIC/MoQ header sniff to auto-label encrypted flows. |
+
+Recovery models, reporting, and tooling:
+
+| Package | What it does |
+|---|---|
+| [`fec`](fec) / [`bond`](bond) | SMPTE ST 2022-1 FEC and ST 2022-7 seamless-redundancy recoverability models + oracles. |
 | [`report`](report) | Render a `result.Matrix` to JSON and a self-contained static HTML conformance grid. |
 | [`stat`](stat) | Bootstrap confidence intervals + overlap tests for distribution-reproducible (Tier-2) results. |
 | [`cmd/impair-profiles`](cmd/impair-profiles) | Inspect the provenanced profile/trace library and print citations. |
