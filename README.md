@@ -165,8 +165,6 @@ The module is stdlib-only (no `require` block, no `go.sum`). CI runs vet, a gofm
 - **RIST** — Simple Profile RTP/RTCP observer, oracle, dual-port relay; FEC (2022-1) and bonding (2022-7) recovery models: implemented and tested.
 - **MoQ** — header detection only (used to auto-label encrypted flows); no MoQ-object-level oracle yet.
 
-See [`docs/`](docs) for the design notes and roadmap behind these choices.
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: keep the core stdlib-only and deterministic, and run `gofmt -l .`, `go vet ./...`, `go test -race ./...`, and `make schedule-golden` before opening a PR.

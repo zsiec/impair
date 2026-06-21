@@ -1,2 +1,10 @@
-# raw workflow research dumps (provenance, kept locally)
-docs/_raw-*.json
+# Internal design/planning notes — kept locally, not shipped
+/PLAN.md
+/docs/
+
+# AI assistant artifacts
+/.claude/
+/CLAUDE.md
+/AGENTS.md
+/GEMINI.md
+/.cursor/
