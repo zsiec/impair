@@ -3,6 +3,7 @@ package ristoracle
 import (
 	"testing"
 
+	"github.com/zsiec/impair/grade"
 	"github.com/zsiec/impair/result"
 	"github.com/zsiec/impair/ristwire"
 )
@@ -38,13 +39,15 @@ func assertVerdict(t *testing.T, in Input, name string, want result.Verdict) {
 // base returns a clean, fully-healthy input that passes every oracle.
 func base() Input {
 	return Input{
-		Lib:           "lib",
-		Scenario:      "scn",
-		LossInjected:  false,
-		SentMsgs:      100,
-		DeliveredMsgs: 100,
-		CorruptMsgs:   0,
-		RelayDropped:  0,
+		Input: grade.Input{
+			Lib:           "lib",
+			Scenario:      "scn",
+			LossInjected:  false,
+			SentMsgs:      100,
+			DeliveredMsgs: 100,
+			CorruptMsgs:   0,
+			RelayDropped:  0,
+		},
 		Obs: ristwire.Observation{
 			RTPPackets:    100,
 			RTCPPackets:   10,
