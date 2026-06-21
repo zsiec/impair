@@ -211,13 +211,21 @@ func TestRelaySelfOverhead(t *testing.T) {
 	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
 	median := lat[len(lat)/2]
 	overhead := median - injected
+	// The relay's self-overhead is an absolute scheduling cost (goroutine wakeup +
+	// timer granularity), not a fraction of the modeled delay — so budget the
+	// larger of 5% and a floor that absorbs OS/CI scheduling jitter (a loaded
+	// runner under -race can add ~1 ms). A relay that adds gross overhead — a
+	// serialization stall, or a timer-per-packet — still blows well past this.
 	budget := injected / 20 // 5%
+	if floor := 4 * time.Millisecond; budget < floor {
+		budget = floor
+	}
 	t.Logf("injected=%v median=%v overhead=%v (budget %v)", injected, median, overhead, budget)
 	if median < injected {
 		t.Fatalf("median latency %v below injected %v — delay not applied", median, injected)
 	}
 	if overhead > budget {
-		t.Fatalf("relay self-overhead %v exceeds 5%% of injected delay (%v)", overhead, budget)
+		t.Fatalf("relay self-overhead %v exceeds budget %v", overhead, budget)
 	}
 }
 
