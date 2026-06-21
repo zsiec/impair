@@ -1,21 +1,22 @@
 // Package ristrelay is the dual-port real-socket driver for RIST Simple Profile,
 // which (unlike SRT) does NOT multiplex: RTP media flows on an even port and
-// RTCP (retransmit requests + reports) on the next odd port, with RTCP flowing
-// receiver->sender. This relay binds an even/odd pair (R, R+1), impairs the RTP
-// media through the Sans-I/O engine, and passes RTCP through cleanly so the ARQ
-// requests survive. The sender's ephemeral RTCP address is DERIVED from its
-// learned RTP source (port+1), per ristgo/RIST port pairing — so we never have
-// to wait for the sender to speak RTCP first. A Tap observes every datagram.
+// RTCP (retransmit requests + reports) on the next odd port. This relay binds an
+// even/odd pair (R, R+1), impairs the RTP media through the shared relaycore.Core
+// (the same min-heap scheduler the SRT relay uses), and passes RTCP through
+// cleanly so the ARQ requests survive. The RIST-specific parts live here — the
+// even/odd socket topology, the RTCP clean pass-through, and learning the
+// sender's RTP/RTCP source addresses; the scheduling datapath is shared. A Tap
+// observes every datagram.
 package ristrelay
 
 import (
 	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/zsiec/impair/engine"
+	"github.com/zsiec/impair/relaycore"
 )
 
 // Tap is invoked for every datagram seen (either port, either direction).
@@ -27,23 +28,18 @@ type Stats struct {
 	Dropped   uint64
 }
 
-// Relay proxies a RIST Simple-Profile sender<->receiver through eng.
+// Relay proxies a RIST Simple-Profile sender<->receiver through eng, over a
+// shared relaycore.Core for the impaired RTP media path.
 type Relay struct {
+	core              *relaycore.Core[*net.UDPAddr]
 	rtp, rtcp         *net.UDPConn
-	recvRTP, recvRTCP *net.UDPAddr                  // the receiver's media (P) and RTCP (P+1)
-	eng               atomic.Pointer[engine.Engine] // live-swappable (SetEngine) for interactive tuning
+	recvRTP, recvRTCP *net.UDPAddr // the receiver's media (P) and RTCP (P+1)
 	tap               Tap
-	base              time.Time
 
 	mu         sync.Mutex
 	senderRTP  *net.UDPAddr // learned from incoming media on R
-	senderRTCP *net.UDPAddr // learned from the sender's outgoing RTCP (ristgo's caller uses an INDEPENDENT ephemeral RTCP port, not media+1)
-	stats      Stats
-	tapMu      sync.Mutex // serializes tap across the two loops (Observer isn't concurrent-safe)
-
-	closed    chan struct{}
-	closeOnce sync.Once
-	wg        sync.WaitGroup
+	senderRTCP *net.UDPAddr // learned from the sender's outgoing RTCP (an INDEPENDENT ephemeral port, not media+1)
+	tapMu      sync.Mutex   // serializes tap across the two loops (Observer isn't concurrent-safe)
 }
 
 // New binds an even/odd relay pair on 127.0.0.1 and bridges to the receiver's
@@ -60,39 +56,35 @@ func New(eng *engine.Engine, recvMediaAddr string, tap Tap) (*Relay, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Relay{
-		rtp: rtp, rtcp: rtcp, recvRTP: rp, recvRTCP: rc,
-		tap: tap, base: time.Now(), closed: make(chan struct{}),
-	}
-	r.eng.Store(eng)
-	r.wg.Add(2)
-	go r.mediaLoop()
-	go r.rtcpLoop()
+	r := &Relay{rtp: rtp, rtcp: rtcp, recvRTP: rp, recvRTCP: rc, tap: tap}
+	r.core = relaycore.New[*net.UDPAddr](eng, func(dst *net.UDPAddr, data []byte) {
+		_, _ = rtp.WriteToUDP(data, dst)
+	}, 0, 0) // default queue bound; no OWD ledger on the RIST path
+	r.core.Go(r.mediaLoop)
+	r.core.Go(r.rtcpLoop)
 	return r, nil
 }
 
 // SetEngine swaps the impairment engine live (interactive tuning); the next RTP
-// packet is impaired by eng. Mirrors relay.Relay.SetEngine.
-func (r *Relay) SetEngine(eng *engine.Engine) { r.eng.Store(eng) }
+// packet is impaired by eng.
+func (r *Relay) SetEngine(eng *engine.Engine) { r.core.SetEngine(eng) }
 
 // RTPAddr is the even media port the sender dials; it derives RTCP as RTPAddr+1.
 func (r *Relay) RTPAddr() string { return r.rtp.LocalAddr().String() }
 
 // Stats snapshots the media-path counters.
 func (r *Relay) Stats() Stats {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.stats
+	f, d, _ := r.core.Stats()
+	return Stats{Forwarded: f, Dropped: d}
 }
 
-// mediaLoop impairs RTP: sender->receiver through the engine, receiver->sender
-// passed back to the learned sender.
+// mediaLoop impairs RTP through the core: sender->receiver (C2S) is the media we
+// impair; receiver->sender (S2C, rare) is passed to the learned sender.
 func (r *Relay) mediaLoop() {
-	defer r.wg.Done()
 	buf := make([]byte, 2048)
 	for {
 		select {
-		case <-r.closed:
+		case <-r.core.Closed():
 			return
 		default:
 		}
@@ -104,10 +96,9 @@ func (r *Relay) mediaLoop() {
 			}
 			return
 		}
-		recvAt := time.Since(r.base).Nanoseconds()
-		data := make([]byte, n)
-		copy(data, buf[:n])
-		r.observe(data)
+		recvAt := r.core.Now()
+		pkt := buf[:n]
+		r.observe(pkt)
 
 		var dir engine.Direction
 		var dst *net.UDPAddr
@@ -128,27 +119,17 @@ func (r *Relay) mediaLoop() {
 			r.mu.Unlock()
 			dst = r.recvRTP
 		}
-
-		for _, a := range r.eng.Load().Handle(engine.Packet{Data: data, Dir: dir}, recvAt) {
-			if a.Kind == engine.Drop {
-				r.mu.Lock()
-				r.stats.Dropped++
-				r.mu.Unlock()
-				continue
-			}
-			r.scheduleRTP(a.Data, dst, a.DeliverAt-recvAt)
-		}
+		r.core.Process(pkt, dir, dst, recvAt)
 	}
 }
 
 // rtcpLoop passes RTCP through cleanly (so retransmit requests survive),
-// deriving the sender's RTCP address as its learned RTP source port + 1.
+// learning the sender's RTCP source so receiver->sender RTCP can reach it.
 func (r *Relay) rtcpLoop() {
-	defer r.wg.Done()
 	buf := make([]byte, 2048)
 	for {
 		select {
-		case <-r.closed:
+		case <-r.core.Closed():
 			return
 		default:
 		}
@@ -160,9 +141,8 @@ func (r *Relay) rtcpLoop() {
 			}
 			return
 		}
-		data := make([]byte, n)
-		copy(data, buf[:n])
-		r.observe(data)
+		pkt := buf[:n]
+		r.observe(pkt)
 
 		var dst *net.UDPAddr
 		if udpEqual(src, r.recvRTCP) {
@@ -183,7 +163,7 @@ func (r *Relay) rtcpLoop() {
 			r.mu.Unlock()
 			dst = r.recvRTCP
 		}
-		_, _ = r.rtcp.WriteToUDP(data, dst)
+		_, _ = r.rtcp.WriteToUDP(pkt, dst)
 	}
 }
 
@@ -197,40 +177,18 @@ func (r *Relay) observe(data []byte) {
 	r.tapMu.Unlock()
 }
 
-func (r *Relay) scheduleRTP(pkt []byte, dst *net.UDPAddr, delay int64) {
-	send := func() {
-		select {
-		case <-r.closed:
-			return
-		default:
-			_, _ = r.rtp.WriteToUDP(pkt, dst)
-			r.mu.Lock()
-			r.stats.Forwarded++
-			r.mu.Unlock()
-		}
-	}
-	if delay <= 0 {
-		send()
-		return
-	}
-	r.wg.Add(1)
-	time.AfterFunc(time.Duration(delay), func() {
-		defer r.wg.Done()
-		send()
-	})
-}
-
-// Close stops both loops and drains scheduled forwards.
+// Close stops both loops and the egress, then closes the sockets.
 func (r *Relay) Close() {
-	r.closeOnce.Do(func() {
-		close(r.closed)
-		_ = r.rtp.SetReadDeadline(time.Now())
-		_ = r.rtcp.SetReadDeadline(time.Now())
-		time.Sleep(50 * time.Millisecond)
-		_ = r.rtp.Close()
-		_ = r.rtcp.Close()
-		r.wg.Wait()
-	})
+	r.core.Close(
+		func() {
+			_ = r.rtp.SetReadDeadline(time.Now())
+			_ = r.rtcp.SetReadDeadline(time.Now())
+		},
+		func() {
+			_ = r.rtp.Close()
+			_ = r.rtcp.Close()
+		},
+	)
 }
 
 // bindEvenPair binds an even media port and the next odd port on 127.0.0.1.

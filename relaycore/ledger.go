@@ -1,4 +1,4 @@
-package relay
+package relaycore
 
 import (
 	"math"
@@ -9,26 +9,26 @@ import (
 )
 
 // Entry is one packet's relay-residence record, decomposed entirely from the
-// relay's OWN single monotonic clock (r.base) with NO cross-process sync. It is
-// the relay-ledger substrate for attributing one-way delay (the OWD decision:
-// Option 3, relay-ledger decomposition). All times are nanoseconds since r.base.
+// relay's OWN single monotonic clock (the core's base) with NO cross-process
+// sync. It is the relay-ledger substrate for attributing one-way delay. All
+// times are nanoseconds since base.
 //
-//	RecvAt    — ingress: time.Since(r.base) when the datagram was read.
+//	RecvAt    — ingress: time.Since(base) when the datagram was read.
 //	DeliverAt — the engine-scheduled forward time (Action.DeliverAt).
-//	EgressAt  — actual WriteToUDPAddrPort time (time.Since(r.base) at send).
+//	EgressAt  — actual socket-write time (time.Since(base) at send).
 //
 // Because all three come off the SAME clock, their differences are exact
 // wire-side delay components with no clock-skew term (see DecomposedOWD).
 type Entry struct {
 	Seq       uint64           // engine ingress sequence (Action.Seq)
 	Dir       engine.Direction // C2S / S2C
-	RecvAt    int64            // ns since r.base: read off the socket
-	DeliverAt int64            // ns since r.base: engine-scheduled delivery
-	EgressAt  int64            // ns since r.base: actual socket write
+	RecvAt    int64            // ns since base: read off the socket
+	DeliverAt int64            // ns since base: engine-scheduled delivery
+	EgressAt  int64            // ns since base: actual socket write
 }
 
 // ledger is a bounded ring of Entry, OFF unless explicitly enabled (a nil
-// *ledger on the Relay means no recording and zero hot-path cost). It is a
+// *ledger on the core means no recording and zero hot-path cost). It is a
 // fixed-capacity overwrite-oldest ring: once full, the next record overwrites
 // the OLDEST entry, so memory is bounded at cap*sizeof(Entry) and a snapshot
 // always reflects the most-recent cap packets. Recording is split: ingress
@@ -97,7 +97,7 @@ func (l *ledger) finalize(h ledgerHandle, egressAt int64) {
 
 // snapshot returns a copy of the recorded entries in chronological (record)
 // order, oldest first. Entries whose EgressAt is still zero (forward enqueued
-// but not yet sent, or tail-dropped after start — see note) are included as-is.
+// but not yet sent, or tail-dropped after start) are included as-is.
 func (l *ledger) snapshot() []Entry {
 	l.mu.Lock()
 	defer l.mu.Unlock()
