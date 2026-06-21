@@ -11,11 +11,11 @@ func TestObserverCounts(t *testing.T) {
 	o.Observe(rtcpRR(0xABCD))
 
 	obs := o.Observation()
-	if obs.RTPPackets != 2 {
-		t.Errorf("RTPPackets = %d, want 2", obs.RTPPackets)
+	if obs.DataPackets != 2 {
+		t.Errorf("DataPackets = %d, want 2", obs.DataPackets)
 	}
-	if obs.RTCPPackets != 3 {
-		t.Errorf("RTCPPackets = %d, want 3", obs.RTCPPackets)
+	if obs.ControlPackets != 3 {
+		t.Errorf("ControlPackets = %d, want 3", obs.ControlPackets)
 	}
 	if obs.SenderReports != 1 {
 		t.Errorf("SenderReports = %d, want 1", obs.SenderReports)
@@ -36,8 +36,8 @@ func TestObserverRetransmit(t *testing.T) {
 	o.Observe(rtpPacket(96, 100, 0, 1)) // retransmit of 100
 
 	obs := o.Observation()
-	if obs.RTPPackets != 3 {
-		t.Errorf("RTPPackets = %d, want 3", obs.RTPPackets)
+	if obs.DataPackets != 3 {
+		t.Errorf("DataPackets = %d, want 3", obs.DataPackets)
 	}
 	if obs.Retransmitted != 1 {
 		t.Errorf("Retransmitted = %d, want 1", obs.Retransmitted)
@@ -111,15 +111,15 @@ func TestObserverNACK(t *testing.T) {
 	o.Observe(rtcpNACK(1, 2, [2]uint16{500, 0b101})) // 500, 501, 503
 
 	obs := o.Observation()
-	if obs.NACKs != 1 {
-		t.Errorf("NACKs = %d, want 1", obs.NACKs)
+	if obs.RetransReqs != 1 {
+		t.Errorf("RetransReqs = %d, want 1", obs.RetransReqs)
 	}
-	if obs.RTCPPackets != 1 {
-		t.Errorf("RTCPPackets = %d, want 1", obs.RTCPPackets)
+	if obs.ControlPackets != 1 {
+		t.Errorf("ControlPackets = %d, want 1", obs.ControlPackets)
 	}
 	for _, s := range []uint16{500, 501, 503} {
-		if !obs.NackedSeqs[s] {
-			t.Errorf("seq %d not in NackedSeqs", s)
+		if !obs.ReqSeqs[s] {
+			t.Errorf("seq %d not in ReqSeqs", s)
 		}
 	}
 }
@@ -143,17 +143,17 @@ func TestObserverFullFlow(t *testing.T) {
 	o.Observe(rtpPacket(96, 5, 0, 7))          // retransmit of 5 (seen twice)
 
 	obs := o.Observation()
-	if obs.RTPPackets != 6 {
-		t.Errorf("RTPPackets = %d, want 6", obs.RTPPackets)
+	if obs.DataPackets != 6 {
+		t.Errorf("DataPackets = %d, want 6", obs.DataPackets)
 	}
 	if obs.SeqGaps != 1 {
 		t.Errorf("SeqGaps = %d, want 1", obs.SeqGaps)
 	}
-	if obs.NACKs != 1 {
-		t.Errorf("NACKs = %d, want 1", obs.NACKs)
+	if obs.RetransReqs != 1 {
+		t.Errorf("RetransReqs = %d, want 1", obs.RetransReqs)
 	}
-	if !obs.NackedSeqs[4] {
-		t.Error("seq 4 not in NackedSeqs")
+	if !obs.ReqSeqs[4] {
+		t.Error("seq 4 not in ReqSeqs")
 	}
 	if obs.Retransmitted != 1 || !obs.RetransSeqs[5] {
 		t.Errorf("retransmit of seq 5 not detected: Retransmitted=%d", obs.Retransmitted)

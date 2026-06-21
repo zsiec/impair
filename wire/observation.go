@@ -5,6 +5,8 @@
 // "the ACK/NAK/retransmit machinery behaved correctly".
 package wire
 
+import "github.com/zsiec/impair/wireobs"
+
 // SRT control packet types (the 15-bit control type field).
 const (
 	CtrlHandshake  uint16 = 0x0000
@@ -47,19 +49,18 @@ func LooksEncrypted(data []byte) bool {
 	return ok && p.Encrypted()
 }
 
-// Observation accumulates the wire facts over one run, from one Observer.
+// Observation accumulates the wire facts over one run, from one Observer. The
+// data/control split, retransmit-request count (NAKs), retransmissions, and the
+// NAK'd/retransmitted sequence sets live in the embedded wireobs.Counters; the
+// fields below are SRT-specific control-plane vocabulary. (The SRT NAK count is
+// Counters.RetransReqs; the NAK'd sequence set is Counters.ReqSeqs.)
 type Observation struct {
-	DataPackets    int
-	ControlPackets int
-	Handshakes     int
-	ACKs           int
-	NAKs           int
-	KeepAlives     int
-	Shutdowns      int
-	AckAcks        int
-	Retransmitted  int             // data packets seen with the retransmit flag set
-	NakedSeqs      map[uint32]bool // sequence numbers that appeared in a NAK
-	RetransSeqs    map[uint32]bool // sequence numbers seen retransmitted
-	MaxAckSeq      uint32          // highest ACK'd sequence number observed
-	AckMonotonic   bool            // ACK'd sequence numbers never went backwards
+	wireobs.Counters[uint32]
+	Handshakes   int
+	ACKs         int
+	KeepAlives   int
+	Shutdowns    int
+	AckAcks      int
+	MaxAckSeq    uint32 // highest ACK'd sequence number observed
+	AckMonotonic bool   // ACK'd sequence numbers never went backwards
 }

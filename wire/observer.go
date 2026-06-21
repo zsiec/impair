@@ -1,6 +1,9 @@
 package wire
 
-import "github.com/zsiec/impair/engine"
+import (
+	"github.com/zsiec/impair/engine"
+	"github.com/zsiec/impair/wireobs"
+)
 
 // Observer accumulates SRT wire facts across a run. It decodes each datagram
 // passed to Observe (in either direction) and tallies the control/data mix,
@@ -21,8 +24,7 @@ type Observer struct {
 func NewObserver() *Observer {
 	return &Observer{
 		obs: Observation{
-			NakedSeqs:    make(map[uint32]bool),
-			RetransSeqs:  make(map[uint32]bool),
+			Counters:     wireobs.NewCounters[uint32](),
 			AckMonotonic: true,
 		},
 	}
@@ -38,15 +40,14 @@ func (o *Observer) Observe(dir engine.Direction, data []byte) {
 	}
 
 	if !p.IsControl {
-		o.obs.DataPackets++
+		o.obs.Data()
 		if p.Retrans {
-			o.obs.Retransmitted++
-			o.obs.RetransSeqs[p.Seq] = true
+			o.obs.Retransmit(p.Seq)
 		}
 		return
 	}
 
-	o.obs.ControlPackets++
+	o.obs.Control()
 	switch p.ControlType {
 	case CtrlHandshake:
 		o.obs.Handshakes++
@@ -60,10 +61,7 @@ func (o *Observer) Observe(dir engine.Direction, data []byte) {
 		o.obs.ACKs++
 		o.recordAck(dir, p.AckSeq)
 	case CtrlNAK:
-		o.obs.NAKs++
-		for _, s := range p.NakSeqs {
-			o.obs.NakedSeqs[s] = true
-		}
+		o.obs.Request(p.NakSeqs)
 	}
 }
 

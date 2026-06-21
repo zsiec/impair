@@ -63,17 +63,17 @@ func arqEngagedUnderLoss(in Input) result.Check {
 		// Wire-only judgement: no delivery counts, so we can confirm ARQ was
 		// exercised but never Fail on completeness.
 		switch {
-		case in.Obs.NAKs > 0 && in.Obs.Retransmitted > 0:
+		case in.Obs.RetransReqs > 0 && in.Obs.Retransmitted > 0:
 			c.Verdict = result.Pass
 			c.Detail = fmt.Sprintf("ARQ active: %d NAK(s), %d retransmit(s) (opaque SUT; delivery not measured)",
-				in.Obs.NAKs, in.Obs.Retransmitted)
+				in.Obs.RetransReqs, in.Obs.Retransmitted)
 		case in.RelayDropped == 0:
 			c.Verdict = result.Pass
 			c.Detail = "no packets dropped on the wire (loss profile did not bite this run)"
 		default:
 			c.Verdict = result.Warn
 			c.Detail = fmt.Sprintf("no ARQ activity under wire loss (%d dropped): %d NAK(s), %d retransmit(s)",
-				in.RelayDropped, in.Obs.NAKs, in.Obs.Retransmitted)
+				in.RelayDropped, in.Obs.RetransReqs, in.Obs.Retransmitted)
 		}
 		return c
 	}
@@ -83,15 +83,15 @@ func arqEngagedUnderLoss(in Input) result.Check {
 		return c
 	}
 
-	arq := in.Obs.NAKs > 0 && in.Obs.Retransmitted > 0
+	arq := in.Obs.RetransReqs > 0 && in.Obs.Retransmitted > 0
 	incomplete := in.DeliveredMsgs < int(float64(in.SentMsgs)*0.5)
-	noActivity := in.Obs.NAKs == 0 && in.Obs.Retransmitted == 0
+	noActivity := in.Obs.RetransReqs == 0 && in.Obs.Retransmitted == 0
 
 	switch {
 	case arq && in.DeliveredMsgs > 0:
 		c.Verdict = result.Pass
 		c.Detail = fmt.Sprintf("ARQ recovered: %d NAK(s), %d retransmit(s), delivered %d/%d",
-			in.Obs.NAKs, in.Obs.Retransmitted, in.DeliveredMsgs, in.SentMsgs)
+			in.Obs.RetransReqs, in.Obs.Retransmitted, in.DeliveredMsgs, in.SentMsgs)
 	case noActivity && incomplete:
 		c.Verdict = result.Fail
 		c.Detail = fmt.Sprintf("no ARQ activity and delivery incomplete (%d/%d) under loss",
@@ -103,7 +103,7 @@ func arqEngagedUnderLoss(in Input) result.Check {
 		// Partial ARQ activity (e.g. NAKs but no retransmits, or vice versa).
 		c.Verdict = result.Warn
 		c.Detail = fmt.Sprintf("partial ARQ activity under loss: %d NAK(s), %d retransmit(s), delivered %d/%d",
-			in.Obs.NAKs, in.Obs.Retransmitted, in.DeliveredMsgs, in.SentMsgs)
+			in.Obs.RetransReqs, in.Obs.Retransmitted, in.DeliveredMsgs, in.SentMsgs)
 	}
 	return c
 }

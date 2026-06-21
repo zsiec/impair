@@ -6,6 +6,7 @@ import (
 	"github.com/zsiec/impair/grade"
 	"github.com/zsiec/impair/result"
 	"github.com/zsiec/impair/ristwire"
+	"github.com/zsiec/impair/wireobs"
 )
 
 // find returns the Check with the given name, failing the test if absent.
@@ -49,8 +50,7 @@ func base() Input {
 			RelayDropped:  0,
 		},
 		Obs: ristwire.Observation{
-			RTPPackets:    100,
-			RTCPPackets:   10,
+			Counters:      wireobs.Counters[uint16]{DataPackets: 100, ControlPackets: 10},
 			SenderReports: 5,
 		},
 	}
@@ -70,19 +70,19 @@ func TestRTPFlow(t *testing.T) {
 
 	// Fail: messages sent but no RTP.
 	in := base()
-	in.Obs.RTPPackets = 0
+	in.Obs.DataPackets = 0
 	assertVerdict(t, in, "rtp-flow", result.Fail)
 
 	// Fail: opaque, no RTP (a connection was attempted).
 	in = base()
-	in.Obs.RTPPackets = 0
+	in.Obs.DataPackets = 0
 	in.SentMsgs = 0
 	in.Opaque = true
 	assertVerdict(t, in, "rtp-flow", result.Fail)
 
 	// Error: no RTP and nothing sent.
 	in = base()
-	in.Obs.RTPPackets = 0
+	in.Obs.DataPackets = 0
 	in.SentMsgs = 0
 	assertVerdict(t, in, "rtp-flow", result.Error)
 }
@@ -136,12 +136,12 @@ func TestRetransmitUnderLoss(t *testing.T) {
 		t.Errorf("no-loss: got %v / %q", c.Verdict, c.Detail)
 	}
 
-	// Pass: ARQ engaged (NACKs + retransmits).
+	// Pass: ARQ engaged (RetransReqs + retransmits).
 	in := base()
 	in.LossInjected = true
 	in.RelayDropped = 5
 	in.DeliveredMsgs = 95
-	in.Obs.NACKs = 5
+	in.Obs.RetransReqs = 5
 	in.Obs.Retransmitted = 5
 	assertVerdict(t, in, "retransmit-under-loss", result.Pass)
 
@@ -149,7 +149,7 @@ func TestRetransmitUnderLoss(t *testing.T) {
 	in = base()
 	in.LossInjected = true
 	in.RelayDropped = 0
-	in.Obs.NACKs = 0
+	in.Obs.RetransReqs = 0
 	in.Obs.Retransmitted = 0
 	assertVerdict(t, in, "retransmit-under-loss", result.Pass)
 
@@ -159,16 +159,16 @@ func TestRetransmitUnderLoss(t *testing.T) {
 	in.RelayDropped = 50
 	in.SentMsgs = 100
 	in.DeliveredMsgs = 40
-	in.Obs.NACKs = 0
+	in.Obs.RetransReqs = 0
 	in.Obs.Retransmitted = 0
 	assertVerdict(t, in, "retransmit-under-loss", result.Fail)
 
-	// Warn: partial activity (NACKs but no retransmits) under real drops.
+	// Warn: partial activity (RetransReqs but no retransmits) under real drops.
 	in = base()
 	in.LossInjected = true
 	in.RelayDropped = 5
 	in.DeliveredMsgs = 95
-	in.Obs.NACKs = 5
+	in.Obs.RetransReqs = 5
 	in.Obs.Retransmitted = 0
 	assertVerdict(t, in, "retransmit-under-loss", result.Warn)
 
@@ -177,7 +177,7 @@ func TestRetransmitUnderLoss(t *testing.T) {
 	in.LossInjected = true
 	in.RelayDropped = 5
 	in.DeliveredMsgs = 99
-	in.Obs.NACKs = 0
+	in.Obs.RetransReqs = 0
 	in.Obs.Retransmitted = 0
 	assertVerdict(t, in, "retransmit-under-loss", result.Warn)
 }
@@ -186,7 +186,7 @@ func TestRTCPActivity(t *testing.T) {
 	assertVerdict(t, base(), "rtcp-activity", result.Pass)
 
 	in := base()
-	in.Obs.RTCPPackets = 0
+	in.Obs.ControlPackets = 0
 	assertVerdict(t, in, "rtcp-activity", result.Warn)
 }
 
@@ -199,7 +199,7 @@ func TestOpaqueWireOnly(t *testing.T) {
 	in.SentMsgs = 0
 	in.DeliveredMsgs = 0
 	in.RelayDropped = 50
-	in.Obs.NACKs = 10
+	in.Obs.RetransReqs = 10
 	in.Obs.Retransmitted = 25
 	checks := byName(Evaluate(in))
 	if got := checks["delivery-integrity"].Verdict; got != result.Pass {
@@ -213,7 +213,7 @@ func TestOpaqueWireOnly(t *testing.T) {
 	}
 
 	// Opaque, loss, drops bit, but no ARQ activity -> Warn (never Fail).
-	in.Obs.NACKs, in.Obs.Retransmitted = 0, 0
+	in.Obs.RetransReqs, in.Obs.Retransmitted = 0, 0
 	if got := byName(Evaluate(in))["retransmit-under-loss"].Verdict; got != result.Warn {
 		t.Errorf("retransmit opaque no-activity = %v, want Warn", got)
 	}
@@ -236,22 +236,22 @@ func TestResultForRollup(t *testing.T) {
 
 	// A Warn check makes the rollup Warn.
 	in = base()
-	in.Obs.RTCPPackets = 0 // rtcp-activity -> Warn
+	in.Obs.ControlPackets = 0 // rtcp-activity -> Warn
 	if v := ResultFor(in).Verdict(); v != result.Warn {
 		t.Errorf("warn rollup = %v, want Warn", v)
 	}
 
 	// A Fail check dominates a Warn.
 	in = base()
-	in.Obs.RTCPPackets = 0 // Warn
-	in.CorruptMsgs = 1     // Fail
+	in.Obs.ControlPackets = 0 // Warn
+	in.CorruptMsgs = 1        // Fail
 	if v := ResultFor(in).Verdict(); v != result.Fail {
 		t.Errorf("fail rollup = %v, want Fail", v)
 	}
 
 	// Error dominates (no RTP, nothing sent).
 	in = base()
-	in.Obs.RTPPackets = 0
+	in.Obs.DataPackets = 0
 	in.SentMsgs = 0
 	in.DeliveredMsgs = 0
 	if v := ResultFor(in).Verdict(); v != result.Error {

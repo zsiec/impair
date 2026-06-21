@@ -41,8 +41,8 @@ func TestObserverAccumulate(t *testing.T) {
 	if obs.Handshakes != 1 || obs.KeepAlives != 1 || obs.Shutdowns != 1 || obs.AckAcks != 1 {
 		t.Errorf("ctrl mix off: %+v", obs)
 	}
-	if obs.ACKs != 1 || obs.NAKs != 1 {
-		t.Errorf("ACKs=%d NAKs=%d, want 1/1", obs.ACKs, obs.NAKs)
+	if obs.ACKs != 1 || obs.RetransReqs != 1 {
+		t.Errorf("ACKs=%d RetransReqs=%d, want 1/1", obs.ACKs, obs.RetransReqs)
 	}
 	if obs.Retransmitted != 1 {
 		t.Errorf("Retransmitted = %d, want 1", obs.Retransmitted)
@@ -51,8 +51,8 @@ func TestObserverAccumulate(t *testing.T) {
 		t.Errorf("RetransSeqs missing seq 2: %v", obs.RetransSeqs)
 	}
 	for _, s := range []uint32{7, 10, 11, 12} {
-		if !obs.NakedSeqs[s] {
-			t.Errorf("NakedSeqs missing %d: %v", s, obs.NakedSeqs)
+		if !obs.ReqSeqs[s] {
+			t.Errorf("ReqSeqs missing %d: %v", s, obs.ReqSeqs)
 		}
 	}
 	if obs.MaxAckSeq != 5 {
@@ -139,8 +139,8 @@ func TestObserverRealCaptureMix(t *testing.T) {
 	if obs.Retransmitted != 1 || !obs.RetransSeqs[lost] {
 		t.Errorf("retransmit tracking off: retrans=%d seqs=%v", obs.Retransmitted, obs.RetransSeqs)
 	}
-	if obs.NAKs != 1 || !obs.NakedSeqs[lost] {
-		t.Errorf("NAK tracking off: naks=%d seqs=%v", obs.NAKs, obs.NakedSeqs)
+	if obs.RetransReqs != 1 || !obs.ReqSeqs[lost] {
+		t.Errorf("NAK tracking off: naks=%d seqs=%v", obs.RetransReqs, obs.ReqSeqs)
 	}
 	if obs.ACKs != 2 || obs.AckAcks != 1 || obs.KeepAlives != 1 {
 		t.Errorf("control mix off: %+v", obs)

@@ -1,5 +1,7 @@
 package ristwire
 
+import "github.com/zsiec/impair/wireobs"
+
 // Observer accumulates RIST wire facts across a run. It decodes each datagram
 // passed to Observe and tallies the RTP/RTCP mix, per-RTCP-type counts (SR/RR),
 // retransmit requests (RTPFB NACKs) and the sequence numbers they request,
@@ -19,9 +21,8 @@ type Observer struct {
 func NewObserver() *Observer {
 	return &Observer{
 		obs: Observation{
-			NackedSeqs:  make(map[uint16]bool),
-			RetransSeqs: make(map[uint16]bool),
-			SSRCs:       make(map[uint32]bool),
+			Counters: wireobs.NewCounters[uint16](),
+			SSRCs:    make(map[uint32]bool),
 		},
 		seen: make(map[uint16]bool),
 	}
@@ -40,7 +41,7 @@ func (o *Observer) Observe(data []byte) {
 	o.obs.SSRCs[p.SSRC] = true
 
 	if p.IsRTCP {
-		o.obs.RTCPPackets++
+		o.obs.Control()
 		switch p.PayloadType {
 		case RTCPSenderReport:
 			o.obs.SenderReports++
@@ -48,16 +49,13 @@ func (o *Observer) Observe(data []byte) {
 			o.obs.ReceiverReports++
 		case RTCPRTPFB:
 			// A transport-layer feedback packet is RIST's retransmit request.
-			o.obs.NACKs++
-			for _, s := range p.NackSeqs {
-				o.obs.NackedSeqs[s] = true
-			}
+			o.obs.Request(p.NackSeqs)
 		}
 		return
 	}
 
 	// RTP.
-	o.obs.RTPPackets++
+	o.obs.Data()
 	o.recordSeq(p.Seq)
 }
 
@@ -66,8 +64,7 @@ func (o *Observer) Observe(data []byte) {
 // the forward sequence progression (handling 16-bit wrap).
 func (o *Observer) recordSeq(seq uint16) {
 	if o.seen[seq] {
-		o.obs.Retransmitted++
-		o.obs.RetransSeqs[seq] = true
+		o.obs.Retransmit(seq)
 		return
 	}
 	o.seen[seq] = true

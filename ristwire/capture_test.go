@@ -85,7 +85,7 @@ func TestDecodeRealRTCP(t *testing.T) {
 
 // TestObserveRealCapture replays a slice of the real capture and checks the
 // observer's tallies: the RIST-APP retransmit request counts as an RTCP packet
-// (it is not an RFC 4585 RTPFB, so it does not increment NACKs), and a media
+// (it is not an RFC 4585 RTPFB, so it does not increment RetransReqs), and a media
 // sequence number seen twice is counted as a retransmission.
 func TestObserveRealCapture(t *testing.T) {
 	o := NewObserver()
@@ -96,11 +96,11 @@ func TestObserveRealCapture(t *testing.T) {
 	o.Observe(mustHex(t, realRTP)) // same seq again = retransmit
 
 	obs := o.Observation()
-	if obs.RTPPackets != 2 {
-		t.Errorf("RTPPackets = %d, want 2", obs.RTPPackets)
+	if obs.DataPackets != 2 {
+		t.Errorf("DataPackets = %d, want 2", obs.DataPackets)
 	}
-	if obs.RTCPPackets != 3 {
-		t.Errorf("RTCPPackets = %d, want 3 (SR, RR, APP)", obs.RTCPPackets)
+	if obs.ControlPackets != 3 {
+		t.Errorf("ControlPackets = %d, want 3 (SR, RR, APP)", obs.ControlPackets)
 	}
 	if obs.SenderReports != 1 {
 		t.Errorf("SenderReports = %d, want 1", obs.SenderReports)
@@ -108,8 +108,8 @@ func TestObserveRealCapture(t *testing.T) {
 	if obs.ReceiverReports != 1 {
 		t.Errorf("ReceiverReports = %d, want 1", obs.ReceiverReports)
 	}
-	if obs.NACKs != 0 {
-		t.Errorf("NACKs = %d, want 0 (RIST-APP is not RFC 4585 RTPFB)", obs.NACKs)
+	if obs.RetransReqs != 0 {
+		t.Errorf("RetransReqs = %d, want 0 (RIST-APP is not RFC 4585 RTPFB)", obs.RetransReqs)
 	}
 	if obs.Retransmitted != 1 || !obs.RetransSeqs[0xcf3d] {
 		t.Errorf("retransmit of seq 0xcf3d not detected: Retransmitted=%d", obs.Retransmitted)

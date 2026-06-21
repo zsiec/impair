@@ -31,14 +31,14 @@ type Input struct {
 // result.Check per invariant, in a stable order.
 func Evaluate(in Input) []result.Check {
 	return []result.Check{
-		grade.Presence("rtp-flow", in.Obs.RTPPackets, in.SentMsgs > 0 || in.Opaque,
+		grade.Presence("rtp-flow", in.Obs.DataPackets, in.SentMsgs > 0 || in.Opaque,
 			"%d RTP packet(s) observed (media flowed)",
 			"no RTP observed despite a connection attempt",
 			"no RTP and no messages sent — run produced no evidence"),
 		grade.DeliveryIntegrity(in.Input),
 		grade.DeliveryComplete(in.Input),
 		retransmitUnderLoss(in),
-		grade.Feedback("rtcp-activity", in.Obs.RTCPPackets,
+		grade.Feedback("rtcp-activity", in.Obs.ControlPackets,
 			"%d RTCP packet(s) observed",
 			"no RTCP feedback observed"),
 	}
@@ -69,7 +69,7 @@ func retransmitUnderLoss(in Input) result.Check {
 	case arq:
 		c.Verdict = result.Pass
 		c.Detail = fmt.Sprintf("RIST ARQ engaged: %d retransmit(s) observed (%d RFC-4585 NACK(s))",
-			in.Obs.Retransmitted, in.Obs.NACKs)
+			in.Obs.Retransmitted, in.Obs.RetransReqs)
 	case in.RelayDropped == 0:
 		c.Verdict = result.Pass
 		c.Detail = "loss profile did not bite (no packets dropped on the wire)"
@@ -83,7 +83,7 @@ func retransmitUnderLoss(in Input) result.Check {
 		// data, so we can only Warn here.
 		c.Verdict = result.Warn
 		c.Detail = fmt.Sprintf("partial/no ARQ activity under loss (%d dropped): %d NACK(s), %d retransmit(s)",
-			in.RelayDropped, in.Obs.NACKs, in.Obs.Retransmitted)
+			in.RelayDropped, in.Obs.RetransReqs, in.Obs.Retransmitted)
 	}
 	return c
 }

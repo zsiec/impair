@@ -109,12 +109,12 @@ func TestArqEngagedUnderLoss(t *testing.T) {
 		t.Errorf("no-loss: got %v / %q", c.Verdict, c.Detail)
 	}
 
-	// Pass: ARQ recovered (NAKs + retransmits + delivery).
+	// Pass: ARQ recovered (RetransReqs + retransmits + delivery).
 	in := base()
 	in.LossInjected = true
 	in.RelayDropped = 5
 	in.DeliveredMsgs = 95
-	in.Obs.NAKs = 5
+	in.Obs.RetransReqs = 5
 	in.Obs.Retransmitted = 5
 	assertVerdict(t, in, "arq-engaged-under-loss", result.Pass)
 
@@ -122,7 +122,7 @@ func TestArqEngagedUnderLoss(t *testing.T) {
 	in = base()
 	in.LossInjected = true
 	in.DeliveredMsgs = 99
-	in.Obs.NAKs = 0
+	in.Obs.RetransReqs = 0
 	in.Obs.Retransmitted = 0
 	assertVerdict(t, in, "arq-engaged-under-loss", result.Warn)
 
@@ -131,15 +131,15 @@ func TestArqEngagedUnderLoss(t *testing.T) {
 	in.LossInjected = true
 	in.SentMsgs = 100
 	in.DeliveredMsgs = 40
-	in.Obs.NAKs = 0
+	in.Obs.RetransReqs = 0
 	in.Obs.Retransmitted = 0
 	assertVerdict(t, in, "arq-engaged-under-loss", result.Fail)
 
-	// Warn: partial ARQ activity (NAKs but no retransmits).
+	// Warn: partial ARQ activity (RetransReqs but no retransmits).
 	in = base()
 	in.LossInjected = true
 	in.DeliveredMsgs = 95
-	in.Obs.NAKs = 5
+	in.Obs.RetransReqs = 5
 	in.Obs.Retransmitted = 0
 	assertVerdict(t, in, "arq-engaged-under-loss", result.Warn)
 }
@@ -208,7 +208,7 @@ func TestOpaqueWireOnly(t *testing.T) {
 	in.SentMsgs = 0
 	in.DeliveredMsgs = 0
 	in.RelayDropped = 50
-	in.Obs.NAKs = 10
+	in.Obs.RetransReqs = 10
 	in.Obs.Retransmitted = 25
 	checks := byName(Evaluate(in))
 	if got := checks["delivery-integrity"].Verdict; got != result.Pass {
@@ -221,7 +221,7 @@ func TestOpaqueWireOnly(t *testing.T) {
 		t.Errorf("arq opaque w/ NAK+retx = %v, want Pass", got)
 	}
 	// Opaque with loss but no ARQ activity -> Warn (cannot Fail without delivery data).
-	in.Obs.NAKs, in.Obs.Retransmitted = 0, 0
+	in.Obs.RetransReqs, in.Obs.Retransmitted = 0, 0
 	if got := byName(Evaluate(in))["arq-engaged-under-loss"].Verdict; got != result.Warn {
 		t.Errorf("arq opaque no-activity = %v, want Warn", got)
 	}
