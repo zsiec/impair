@@ -63,6 +63,16 @@ func TestRelayForwardsBothDirections(t *testing.T) {
 		t.Fatalf("sender got %q", buf[:n])
 	}
 
+	// The relay bumps its tap/forward counters in the forwarding goroutine, which
+	// can lag the delivered packet under -race on a slow CI runner — poll, don't
+	// assert once.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt64(&taps) >= 2 && r.Stats().Forwarded >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if atomic.LoadInt64(&taps) < 2 {
 		t.Fatalf("expected >=2 taps, got %d", taps)
 	}

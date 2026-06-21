@@ -231,10 +231,13 @@ func TestLedgerRecordsUnderFixedDelay(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out draining upstream")
 	}
-	// Let the last egress finalize.
-	deadline := time.Now().Add(2 * time.Second)
+	// Let every egress finalize — poll until all n entries DECOMPOSE, not merely
+	// until they exist: an entry lands in the ledger before its egress timestamp
+	// does, so len(Ledger()) can hit n while DecomposedOWD still sees fewer
+	// (especially under -race on a slow CI runner).
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(r.Ledger()) >= n {
+		if dec, _ := DecomposedOWD(r.Ledger()); dec.N >= n {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
